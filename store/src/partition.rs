@@ -219,8 +219,4 @@ mod tests {
         assert_eq!(splits[2].1.num_columns(), 3);
     }
 
-    #[test]
-    fn panic_on_unexpected_column() {
-        todo!();
-    }
 }

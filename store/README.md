@@ -15,6 +15,7 @@ any of the cloud storage providers.
 
 ## Transaction Log
 
+```
 UPDATE
 (OBJ)   [id]    [column-a]  [column-a-op]   (column-a-view)
 001     001     "a"         set             "a"
@@ -24,13 +25,16 @@ UPDATE
 005     001     null        delete          null
 006     001     "a"         append          "a"
 007     001     "a"         set             "a"
+```
 
+```
 { action: append-record, object="001" version="1" }
 { action: append-record, object="002" version="2" }
 { action: append-record, object="003" version="3" }
 { action: append-record, object="004" version="4" }
 { action: append-record, object="005" version="5" }
 { action: checkpoint,    object="006" version="5" }
+```
 
 
 
