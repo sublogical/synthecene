@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package calico.log_protocol;
+
+enum LogProtocolVersion {
+    VERSION_0 = 0;
+}
+
+message Tile {
+    uint64 partition_num = 1;
+    string column_group = 2;
+}
+
+message Ref {
+    string label = 1;
+    uint64 ref_seq = 2;
+    bytes commit_id = 3;
+}
+
+message Commit {
+    LogProtocolVersion protocol_version = 1;
+    LogProtocolVersion min_reader_version = 2;
+    LogProtocolVersion min_writer_version = 3;
+    bytes commit_id = 4;
+    bytes parent_id = 5;
+
+    // monotonicly increasing table version for this update
+    uint64 table_version = 6;
+
+    // timestamp commit was created
+    uint64 timestamp = 7;
+
+    // path to parquet object files for this update
+    repeated File file = 8;
+
+    // Columns updated in this commit
+    repeated string columns = 9;
+
+    // SQL expression to use to merge each column in this commit
+    map<string, string> expression_map = 10;
+}
+
+enum FileType {
+    Data = 0;
+    Metadata = 1;
+}
+
+message File {
+    string file_path = 2;
+    FileType file_type = 3;
+    uint64 file_size = 4;
+    uint64 update_time = 5;
+}
+
+message Checkpoint {
+    bytes commit_id = 1;
+
+    // timestamp checkpoint was created
+    uint64 timestamp = 2;
+
+    // path to parquet object files for this checkpoint
+    repeated File data_objects = 3;
+
+    File metadata_objects = 4;
+}
+
