@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package calico.log_protocol;
+package calico.protocol;
 
 enum LogProtocolVersion {
     VERSION_0 = 0;

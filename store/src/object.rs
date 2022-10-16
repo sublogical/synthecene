@@ -43,7 +43,7 @@ pub async fn write_batches<'a>(object_store: &ObjectStore, split_batches: Vec<(T
 }
 
 impl <'a> ObjectWriter {
-    pub fn write(&self, tile: Tile, batch: Arc<RecordBatch>) -> impl Future<Output=CalicoResult<(Tile, String)>> + 'a {
+    pub fn write(&self, tile: Tile, _batch: Arc<RecordBatch>) -> impl Future<Output=CalicoResult<(Tile, String)>> + 'a {
         let path = to_path("soo", &tile.column_group, tile.partition_num);
 
         async {

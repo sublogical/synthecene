@@ -10,8 +10,7 @@ use crate::partition::{ColumnGroupRef, ColumnRef };
 
 
 // todo: move to protobuf or whatever
-pub struct StorageConfig {
-
+pub struct _StorageConfig {
     pub column: ColumnRef,
     pub column_group: ColumnGroupRef
 }
@@ -26,7 +25,7 @@ struct ParquetWriter {
 }
 
 impl ParquetWriter {
-    pub fn from_file(file: File, schema: Arc<Schema>) -> Self {
+    pub fn _from_file(file: File, schema: Arc<Schema>) -> Self {
         let props = WriterProperties::builder().build();
         let writer = ArrowWriter::try_new(file, schema, Some(props)).unwrap();
 

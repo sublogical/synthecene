@@ -1,6 +1,5 @@
 use bytes::Bytes;
-use futures::{TryFutureExt, TryStreamExt, Future};
-use itertools::{sorted, Itertools};
+use futures::{TryStreamExt, future};
 use log::info;
 use object_store::local::LocalFileSystem;
 use object_store::ObjectStore;
@@ -11,7 +10,7 @@ use std::ops::Deref;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::log_protocol;
+use crate::protocol;
 use crate::partition::ColumnRef;
 use crate::result::{CalicoResult, CalicoError};
 
@@ -37,7 +36,7 @@ impl TableView<'_> {
 
         for commit in history {
             if commit.has_checkpoint().await? {
-                let cp:Checkpoint = log.checkpoint(&commit.commit_id).await?.clone();
+                let cp:Checkpoint = log.get_checkpoint(&commit.commit_id).await?.clone();
 
                 return Ok(TableView {
                     checkpoint: Some(cp),
@@ -62,34 +61,30 @@ impl TableView<'_> {
 
 #[derive(Clone, Debug)]
 pub struct Commit<'a>{
-    commit: log_protocol::Commit,
+    commit: protocol::Commit,
     log: &'a TransactionLog
 }
 
 impl Deref for Commit<'_> {
-    type Target = log_protocol::Commit;
-    fn deref(&self) -> &log_protocol::Commit { &self.commit }
+    type Target = protocol::Commit;
+    fn deref(&self) -> &protocol::Commit { &self.commit }
 }
 
 impl Commit<'_> {
-    async fn history(&self, max_history: u32) -> CalicoResult<Vec<Commit>> {
+    pub async fn history(&self, max_history: u32) -> CalicoResult<Vec<Commit>> {
         let mut max_history = max_history;
         let mut history:Vec<Commit> = Vec::new();   
-        let mut curr = self;
-        let mut next_id = curr.parent_id.to_vec();
+        let mut next_id = self.parent_id.to_vec();
 
-        println!("{}: reading commit history", hex::encode(&self.commit_id));
-
+        history.push(self.clone());
         while max_history > 0 {
-            history.push(curr.clone());
 
-            println!("{}: reading {}", hex::encode(&self.commit_id), hex::encode(&next_id));
             match self.log.get_commit(&next_id).await {
                 Ok(commit) => {
                     next_id = commit.parent_id.to_vec();
+                    history.push(commit);
                 }
-                Err(e) => {
-                    println!("{}: NOT FOUND {}", hex::encode(&self.commit_id), hex::encode(&next_id));
+                Err(_) => {
                     return Ok(history);
                 }
             }
@@ -99,26 +94,30 @@ impl Commit<'_> {
         Ok(history)
     }
 
-    async fn view(&self, max_history: u32) -> CalicoResult<TableView> {
+    pub async fn view(&self, max_history: u32) -> CalicoResult<TableView> {
         let history = self.history(max_history).await?;
         TableView::from_history(self.log, history).await
     }
 
     // Determines whether there is an existing checkpoint for this commit
-    async fn has_checkpoint(&self) -> CalicoResult<bool> {
+    pub async fn has_checkpoint(&self) -> CalicoResult<bool> {
         self.log.has_checkpoint(&self.commit_id).await
     }
 
-    async fn checkpoint(&self) -> CalicoResult<Checkpoint> {
-        self.log.checkpoint(&self.commit_id).await
+    pub async fn get_checkpoint(&self) -> CalicoResult<Checkpoint> {
+        self.log.get_checkpoint(&self.commit_id).await
+    }
+
+    pub async fn parent(&self) -> CalicoResult<Commit> {
+        self.log.get_commit(&self.parent_id).await
     }
 
     // walks the default parent heirarchy back until it finds the commit that 
     // represents the state of this lineage at the specified timestamp, ie the
     // first commit found at a timestamp equal to or less than <timestamp>
-    pub async fn at_timestamp(&self, timestamp: u64) -> CalicoResult<Commit> {
-        let mut candidate_commit = self;
-        let mut candidate_timestamp = self.timestamp;
+    pub async fn at_timestamp(&self, _timestamp: u64) -> CalicoResult<Commit> {
+        let mut _candidate_commit = self;
+        let mut _candidate_timestamp = self.timestamp;
 
         // todo: consider freaking out if the history is branching
 
@@ -136,13 +135,20 @@ impl Commit<'_> {
 
 #[derive(Clone, Debug)]
 pub struct Checkpoint<'a> {
-    checkpoint: log_protocol::Checkpoint,
+    checkpoint: protocol::Checkpoint,
     log: &'a TransactionLog
 }
 
+impl Checkpoint<'_> {
+    // Returns the commit object this checkpoint corresponds to.
+    pub async fn commit(&self) -> CalicoResult<Commit> {
+        self.log.get_commit(&self.checkpoint.commit_id).await
+    }
+}
+
 impl Deref for Checkpoint<'_> {
-    type Target = log_protocol::Checkpoint;
-    fn deref(&self) -> &log_protocol::Checkpoint { &self.checkpoint }
+    type Target = protocol::Checkpoint;
+    fn deref(&self) -> &protocol::Checkpoint { &self.checkpoint }
 }
 
 #[derive(Clone, Debug)]
@@ -156,6 +162,11 @@ impl TransactionLog {
             object_store: Arc::new(Self::get_object_store(log_config)?)
         };
 
+        log.init_dir(Self::REF_DIR).await?;
+        log.init_dir(Self::TMP_DIR).await?;
+        log.init_dir(Self::COMMIT_DIR).await?;
+        log.init_dir(Self::CHECKPOINT_DIR).await?;
+
         log.init_branch(MAINLINE).await?;
 
         Ok(log)
@@ -165,7 +176,7 @@ impl TransactionLog {
         Ok(Box::new(LocalFileSystem::new_with_prefix(log_config.log_path)?))
     }
     
-    pub fn open(log_path: &str) -> CalicoResult<TransactionLog> {
+    pub fn open(_log_path: &str) -> CalicoResult<TransactionLog> {
         todo!("check to see if the path exists and is initialized, panic if not");
     }
 
@@ -184,7 +195,7 @@ impl TransactionLog {
 
     pub async fn head_id<'a>(&self, branch: BranchRef<'a>) -> CalicoResult<Vec<u8>> 
     {
-        let mut prot_ref = self.get_last_ref(branch).await?;
+        let prot_ref = self.get_last_ref(branch).await?;
 
         Ok(prot_ref.commit_id)
     }
@@ -193,8 +204,11 @@ impl TransactionLog {
         self.head_id(MAINLINE).await
     }
 
-    pub async fn init_branch<'a>(&self, branch: BranchRef<'a>) -> CalicoResult<log_protocol::Ref> {
-        let mut prot_ref = log_protocol::Ref::default();
+    pub async fn init_branch<'a>(&self, branch: BranchRef<'a>) -> CalicoResult<protocol::Ref> {
+        let path = Self::branch_path(branch)?;
+        self.init_dir(&path.to_string().as_str()).await?;
+
+        let mut prot_ref = protocol::Ref::default();
 
         prot_ref.label = branch.to_string();
         prot_ref.ref_seq = 0;
@@ -205,14 +219,14 @@ impl TransactionLog {
 
 
     pub async fn get_commit(&self, commit_id: &Vec<u8>) -> CalicoResult<Commit> {
-        let path: ObjectStorePath = format!("commit/{}", hex::encode(&commit_id)).try_into().unwrap();
+        let path = Self::commit_path(&commit_id)?;
 
         // todo: support a local in-memory object store cache
 
         info!("{}: reading commit record", hex::encode(&commit_id));
         let result = self.object_store.get(&path).await?;
         let bytes = result.bytes().await?;
-        let commit:log_protocol::Commit = log_protocol::Commit::decode(bytes)?;
+        let commit:protocol::Commit = protocol::Commit::decode(bytes)?;
 
         Ok(Commit {
             commit,
@@ -232,9 +246,9 @@ impl TransactionLog {
                          commit_timestamp: u64,
                          columns: Vec<ColumnRef>,
                          _column_expressions: Vec<(ColumnRef, String)>,
-                         files: Vec<log_protocol::File>) -> CalicoResult<Commit> {
+                         files: Vec<protocol::File>) -> CalicoResult<Commit> {
         
-        let mut commit = log_protocol::Commit::default();
+        let mut commit = protocol::Commit::default();
 
         // todo: any way to avoid vec<u8> for this since we have fixed size?
         commit.commit_id = rand::thread_rng().gen::<[u8; 20]>().to_vec();
@@ -250,10 +264,13 @@ impl TransactionLog {
         commit.encode(&mut buf)?;
         assert_eq!(expected_len, buf.len());
 
-        let path: ObjectStorePath = format!("commit/{}", hex::encode(&commit.commit_id)).try_into().unwrap();
+        let path = Self::commit_path(&commit.commit_id)?;
         let data = Bytes::from(buf);
         
-        println!("{}: storing commit record", hex::encode(&commit.commit_id));
+        info!("{}: storing commit record", hex::encode(&commit.commit_id));
+
+        // Note that this does not use the 'put_if_not_exist' because it is 
+        // expected that a [u8; 20] rand is always unique.
         self.object_store.put(&path, data).await?;
 
         Ok(Commit {
@@ -264,22 +281,23 @@ impl TransactionLog {
 
     // finds the last instance of a branch ref
     async fn find_last_ref<'a>(&self, branch: BranchRef<'a>) -> CalicoResult<ObjectStorePath> {
-        let prefix: ObjectStorePath = format!("refs/{}/", branch).try_into().unwrap();
+        let prefix: ObjectStorePath = format!("{}/{}/", Self::REF_DIR, branch).try_into().unwrap();
 
         let mut paths = self.object_store.list(Some(&prefix))
             .await?
             .map_ok(|meta| meta.location)
+            .try_filter(|path| future::ready(!path.to_string().ends_with(Self::META_FILE)))
             .try_collect::<Vec<ObjectStorePath>>().await?;
         
         paths.sort();
+
         paths.last()
             .map(|path| path.clone())
             .ok_or(CalicoError::BranchNotFound(branch.to_string()))
     }
 
-    async fn get_last_ref<'a>(&self, branch: BranchRef<'a>) -> CalicoResult<log_protocol::Ref> {
+    async fn get_last_ref<'a>(&self, branch: BranchRef<'a>) -> CalicoResult<protocol::Ref> {
         let ref_path = self.find_last_ref(branch).await?;
-        println!("Last Ref: {} = {}", branch, ref_path);
 
         // todo: support a local in-memory object store cache
 
@@ -287,31 +305,32 @@ impl TransactionLog {
 
         let result = self.object_store.get(&ref_path).await?;
         let bytes = result.bytes().await?;
-        let prot_ref:log_protocol::Ref = log_protocol::Ref::decode(bytes)?;
+        let prot_ref:protocol::Ref = protocol::Ref::decode(bytes)?;
 
         Ok(prot_ref)
     }
 
-    async fn put_ref<'a>(&self, branch: BranchRef<'a>, prot_ref: log_protocol::Ref) -> CalicoResult<log_protocol::Ref> {
+    async fn put_ref<'a>(&self, branch: BranchRef<'a>, prot_ref: protocol::Ref) -> CalicoResult<protocol::Ref> {
         let expected_len = prot_ref.encoded_len();
 
         let mut buf = Vec::with_capacity(18);
         prot_ref.encode(&mut buf)?;
         assert_eq!(expected_len, buf.len());
 
-        let path: ObjectStorePath = format!("refs/{}/{:08x}", branch, prot_ref.ref_seq).try_into().unwrap();
+        let path = Self::ref_path(branch, prot_ref.ref_seq)?;
+
         let data = Bytes::from(buf);
 
         info!("{}: writing branch ref {}", branch, path);
-        self.object_store.put(&path, data).await?;
-
+        self.put_if_not_exists(&path, data).await?;
+        
         Ok(prot_ref)
     }
 
     // Perform a fast-forward only merge on a branch to a commit.
     pub async fn fast_forward<'a>(&self,
                                   branch: BranchRef<'a>,
-                                  commit_id: &Vec<u8>) -> CalicoResult<log_protocol::Ref> {
+                                  commit_id: &Vec<u8>) -> CalicoResult<protocol::Ref> {
         let mut prot_ref = self.get_last_ref(branch).await?;
 
         // TODO: make sure we're actually fast forwarding!
@@ -323,38 +342,138 @@ impl TransactionLog {
     }
 
     // Creates a new checkpoint based on the specified commit using the set of objects referenced for the snapshot
-    pub fn create_checkpoint(&self, 
-                             commit_id: &Vec<u8>,
-                             files: &Vec<log_protocol::File>) -> CalicoResult<Checkpoint> {
+    pub async fn create_checkpoint(&self, 
+                                   commit_id: &Vec<u8>,
+                                   timestamp: u64,
+                                   data_objects: &Vec<protocol::File>) -> CalicoResult<Checkpoint> {
+
+        let mut checkpoint = protocol::Checkpoint::default();
+
+        checkpoint.commit_id = commit_id.to_vec();
+        checkpoint.timestamp = timestamp;
+        checkpoint.data_objects = data_objects.to_vec();
+
+        let path = Self::checkpoint_path(commit_id)?;
+
+        // todo: support checkpointing metadata
+        let expected_len = checkpoint.encoded_len();
+
+        let mut buf = Vec::with_capacity(18);
+        checkpoint.encode(&mut buf)?;
+        assert_eq!(expected_len, buf.len());
+        let data = Bytes::from(buf);
+
+        info!("{}: writing checkpoint to {}",  hex::encode(&commit_id), path);
+        self.put_if_not_exists(&path, data).await?;
             
         Ok(Checkpoint {
             log: self,
-            checkpoint: log_protocol::Checkpoint::default(),
+            checkpoint
         })
     }
 
     // Determines whether there is an existing checkpoint for the passed in commit
-    async fn has_checkpoint(&self, commit_id: &Vec<u8>) -> CalicoResult<bool> {
-        Ok(false)
+    pub async fn has_checkpoint(&self, commit_id: &Vec<u8>) -> CalicoResult<bool> {
+        let path = Self::checkpoint_path(commit_id)?;
+
+        Ok(self.object_store.head(&path).await.is_ok())
     }
 
-    async fn checkpoint(&self, commit_id: &Vec<u8>) -> CalicoResult<Checkpoint> {
-        todo!("load the actual checkpoint");
+    pub async fn get_checkpoint(&self, commit_id: &Vec<u8>) -> CalicoResult<Checkpoint> {
+        let path = Self::checkpoint_path(commit_id)?;
+        let result = self.object_store.get(&path).await?;
+        let bytes = result.bytes().await?;
+        let checkpoint:protocol::Checkpoint = protocol::Checkpoint::decode(bytes)?;
+
+        Ok(Checkpoint {
+            log: self,
+            checkpoint
+        })
     }
 
+    //--------------------------------------------------------------------------
+    // Object Store Helpers
+    //--------------------------------------------------------------------------
+    
+    const REF_DIR: &'static str = "refs";
+    const TMP_DIR: &'static str = "tmp";
+    const COMMIT_DIR: &'static str = "commit";
+    const CHECKPOINT_DIR: &'static str = "checkpoints";
+
+    const META_FILE: &'static str = ".meta";
+
+    fn ref_path<'a>(branch: BranchRef<'a>, ref_seq: u64) -> CalicoResult<ObjectStorePath> {
+        let path: ObjectStorePath = format!("{}/{}/{:08x}", Self::REF_DIR, branch, ref_seq).try_into().unwrap();
+        Ok(path)
+    }
+
+    fn branch_path<'a>(branch: BranchRef<'a>) -> CalicoResult<ObjectStorePath> {
+        let path: ObjectStorePath = format!("{}/{}", Self::REF_DIR, branch).try_into().unwrap();
+        Ok(path)
+    }
+
+    fn tmp_path() -> CalicoResult<ObjectStorePath> {
+        let tmp_id = rand::thread_rng().gen::<[u8; 20]>().to_vec();
+        let path: ObjectStorePath = format!("{}/{}", Self::TMP_DIR, hex::encode(&tmp_id)).try_into().unwrap();
+        Ok(path)
+    }
+
+    fn commit_path(commit_id: &Vec<u8>) -> CalicoResult<ObjectStorePath> {
+        let path: ObjectStorePath = format!("{}/{}", Self::COMMIT_DIR, hex::encode(&commit_id)).try_into().unwrap();
+        Ok(path)
+    }
+
+    fn checkpoint_path(commit_id: &Vec<u8>) -> CalicoResult<ObjectStorePath> {
+        let path: ObjectStorePath = format!("{}/{}", Self::CHECKPOINT_DIR, hex::encode(&commit_id)).try_into().unwrap();
+        Ok(path)
+    }
+
+    // helper to perform a safe put to the object store. write to tmp, rename 
+    // to destination. If it fails try to cleanup the temp, but don't care if 
+    // you can't
+
+    async fn put_if_not_exists(&self, path: &ObjectStorePath, data: Bytes) -> CalicoResult<()> {
+        let tmp_path = Self::tmp_path()?;
+
+        self.object_store.put(&tmp_path, data).await?;
+
+        // todo: support tmp cleanup in GC
+        
+        println!("-----MOVE TO: {}", path);
+        match self.object_store.copy_if_not_exists(&tmp_path, &path).await {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                println!("-----ERR CLEANUP {:?}", e);
+                // clean up 
+                self.object_store.delete(&tmp_path).await?;
+                println!("-----CLEANEDUP {:?}", e);
+                Err(CalicoError::ObjectStoreError(e))
+            },
+        }
+
+    }
+
+    async fn init_dir<'a>(&self, path:&'a str) -> CalicoResult<()> {
+        let path: ObjectStorePath = format!("{}/{}", path, Self::META_FILE).try_into().unwrap();
+        let data = Bytes::from("{}");
+
+        println!("-----INIT: {}", path);
+
+        self.object_store.put(&path, data).await?;
+
+        Ok(())
+    }
 }
 
 
 #[cfg(test)]
 mod tests {
     use tempfile::tempdir;
-    use std::{fs, time};
+    use std::fs;
 
     use crate::log::{TransactionLog, LogConfig, Commit };
-    use crate::log_protocol;
+    use crate::protocol;
     use crate::result::CalicoResult;
-    use crate::result::CalicoError::ObjectStoreError;
-    use std::io::ErrorKind::NotFound;
 
     use super::MAINLINE;
 
@@ -373,16 +492,19 @@ mod tests {
         Ok(())
     }
 
+    fn test_file(timestamp: u64, filename: &str) -> protocol::File {
+        protocol::File {
+            file_path: filename.to_string(),
+            file_type: protocol::FileType::Data as i32,
+            file_size: 1,
+            update_time: timestamp
+        }
+    }
     async fn test_commit_push<'a>(log:&'a TransactionLog, timestamp: u64, filename: &str) -> Commit<'a> {
         let cols = vec!["a".to_string()];
         let col_expr = vec![("a".to_string(), "$new".to_string())];
         let head_id = log.head_id_mainline().await.unwrap();
-        let file = log_protocol::File {
-            file_path: filename.to_string(),
-            file_type: log_protocol::FileType::Data as i32,
-            file_size: 1,
-            update_time: timestamp
-        };
+        let file = test_file(timestamp, filename);
 
         let commit = log.create_commit(
             &head_id.to_vec(), 
@@ -434,61 +556,83 @@ mod tests {
             log_path: temp_logdir.path()
         };
 
-        let log = TransactionLog::init(&log_config).await?;
+        let log = TransactionLog::init(&log_config).await.unwrap();
         test_commit_push(&log, 1, "a").await;
 
         let head = log.head_mainline().await?;
-        let history = head.history(100).await?;
+        let history = head.history(100).await.unwrap();
         assert_eq!(history.len(), 1);
 
-        let table = head.view(100).await?;
+        let table = head.view(100).await.unwrap();
         assert!(!table.has_checkpoint());
         assert_eq!(table.history.len(), 1);
 
         test_commit_push(&log, 1, "b").await;
 
         let head = log.head_mainline().await?;
-        let history = head.history(100).await?;
+        let history = head.history(100).await.unwrap();
         assert_eq!(history.len(), 2);
 
-        let table = head.view(100).await?;
+        let table = head.view(100).await.unwrap();
         assert!(!table.has_checkpoint());
         assert_eq!(table.history.len(), 2);
 
         Ok(())
     }
 
-    /*
-    #[test]
-    fn appends_checkpoint_log() -> CalicoResult<()> {
+    #[tokio::test]
+    async fn appends_checkpoint_log() -> CalicoResult<()> {
         let temp_logdir = tempdir().unwrap();
 
         let log_config = LogConfig {
             log_path: temp_logdir.path()
         };
 
-        let log = TransactionLog::init(&log_config)?;
-        test_commit!(&log, 1, &vec![F("b", 2)])?;
-        test_commit!(&log, 2, &vec![F("b", 2)])?;
-        let saved_commit = test_commit!(&log, 3, &vec![F("c", 2)])?;
-        log.create_checkpoint(&saved_commit.commit_id, &vec![F("d", 4)])?;
-        test_commit!(&log, 4, &vec![F("e", 2)])?;
+        let log = TransactionLog::init(&log_config).await?;
+        test_commit_push(&log, 1, "a").await;
+        test_commit_push(&log, 2, "b").await;
+        let saved_commit = test_commit_push(&log, 3, "c").await;
+        test_commit_push(&log, 4, "e").await;
+        log.create_checkpoint(&saved_commit.commit_id, 5, &vec![test_file(5, "d")]).await?;
 
-        let history = log.head_mainline()?.history()?;
-        assert_eq!(history.len(), 5);
+        let head = log.head_mainline().await?;
+        let history = head.history(100).await?;
+        assert_eq!(history.len(), 4);
 
-        let table = log.head_mainline()?.view()?;
-        let files = table.files()?;
+        let table = head.view(100).await?;
+        assert!(table.has_checkpoint());
+        assert_eq!(table.history.len(), 1);
 
-        assert!(log.has_checkpoint(&saved_commit.commit_id));
-        assert!(!log.has_checkpoint(&log.head_mainline()?.commit_id));
+        assert!(log.has_checkpoint(&saved_commit.commit_id).await?);
+        assert!(saved_commit.has_checkpoint().await?);
 
-        assert_eq!(files.len(), 2);
-        assert_eq!(files[0].file_path, "d");
-        assert_eq!(files[1].file_path, "e");
+        assert!(!head.has_checkpoint().await?);
+
+ //       assert_eq!(head.parent().await?, saved_commit);
+        assert!(head.parent().await?.has_checkpoint().await?);
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn fails_duplicate_checkpoint() -> CalicoResult<()> {
+        let temp_logdir = tempdir().unwrap();
+
+        let log_config = LogConfig {
+            log_path: temp_logdir.path()
+        };
+
+        let log = TransactionLog::init(&log_config).await?;
+        let saved_commit = test_commit_push(&log, 1, "a").await;
+        log.create_checkpoint(&saved_commit.commit_id, 2, &vec![test_file(5, "d")]).await?;
+        let checkpoint_result = log.create_checkpoint(&saved_commit.commit_id, 3, &vec![test_file(5, "d")]).await;
+
+        assert!(checkpoint_result.is_err());
+
+        Ok(())
+    }
+
+    /*
 
     #[test]
     fn timetravel() -> CalicoResult<()> {

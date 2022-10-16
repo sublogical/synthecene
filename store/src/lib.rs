@@ -1,6 +1,6 @@
-pub mod log_protocol {
+pub mod protocol {
     // todo: not windows specific (gah)
-    include!(concat!(env!("OUT_DIR"), "\\calico.log_protocol.rs"));
+    include!(concat!(env!("OUT_DIR"), "\\calico.protocol.rs"));
 }
 
 mod writer;
