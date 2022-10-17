@@ -156,10 +156,8 @@ pub struct TransactionLog {
 }
 
 impl TransactionLog {
-    pub async fn init<'a>(log_config: &LogConfig<'a>) -> CalicoResult<TransactionLog> {
-        let log = TransactionLog{ 
-            object_store: Arc::new(Self::get_object_store(log_config)?)
-        };
+    pub async fn init(object_store: Arc<Box<dyn ObjectStore>>) -> CalicoResult<TransactionLog> {
+        let log = TransactionLog{ object_store };
 
         log.init_dir(Self::REF_DIR).await?;
         log.init_dir(Self::TMP_DIR).await?;
@@ -171,14 +169,16 @@ impl TransactionLog {
         Ok(log)
     }
 
+    pub fn open(object_store: Arc<Box<dyn ObjectStore>>) -> CalicoResult<TransactionLog> {
+        let log = TransactionLog{ object_store };
+        // todo!("check to see if the path exists and is initialized, panic if not");
+        Ok(log)
+    }
+
     fn get_object_store(log_config: &LogConfig) -> CalicoResult<Box<dyn ObjectStore>> {
         Ok(Box::new(LocalFileSystem::new_with_prefix(log_config.log_path)?))
     }
     
-    pub fn open(_log_path: &str) -> CalicoResult<TransactionLog> {
-        todo!("check to see if the path exists and is initialized, panic if not");
-    }
-
     pub async fn head<'a>(&self, branch: BranchRef<'a>) -> CalicoResult<Commit> {
         let commit_id = self.head_id(branch).await?;
 
@@ -468,8 +468,11 @@ impl TransactionLog {
 
 #[cfg(test)]
 mod tests {
+    use object_store::ObjectStore;
+    use object_store::local::LocalFileSystem;
     use tempfile::tempdir;
     use std::fs;
+    use std::sync::Arc;
 
     use crate::log::{TransactionLog, LogConfig, Commit };
     use crate::protocol;
@@ -480,12 +483,9 @@ mod tests {
     #[tokio::test]
     async fn create_new_transaction_log() -> CalicoResult<()> {
         let temp_logdir = tempdir().unwrap();
+        let object_store:Arc<Box<dyn ObjectStore>> = Arc::new(Box::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?));
+        let log = TransactionLog::init(object_store).await?;
 
-        let log_config = LogConfig {
-            log_path: temp_logdir.path()
-        };
-
-        let log = TransactionLog::init(&log_config).await?;
         let head_result = log.head_mainline().await;
         assert!(head_result.is_err());
 
@@ -524,14 +524,11 @@ mod tests {
     #[tokio::test]
     async fn round_trip() -> CalicoResult<()> {
         let temp_logdir = tempdir().unwrap();
+        let object_store:Arc<Box<dyn ObjectStore>> = Arc::new(Box::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?));
+        let log = TransactionLog::init(object_store).await?;
 
-        let log_config = LogConfig {
-            log_path: temp_logdir.path()
-        };
-
-        let log = TransactionLog::init(&log_config).await?;
         let commit = test_commit_push(&log, 1, "a").await;
-        let commit_dir = log_config.log_path.join("commit");
+        let commit_dir = temp_logdir.path().join("commit");
         let commit_file = fs::read_dir(commit_dir).unwrap().nth(0).unwrap().unwrap();
         let commit_size = fs::metadata(commit_file.path()).unwrap().len();
 
@@ -551,12 +548,9 @@ mod tests {
     async fn appends_in_log() -> CalicoResult<()> {
 
         let temp_logdir = tempdir().unwrap();
+        let object_store:Arc<Box<dyn ObjectStore>> = Arc::new(Box::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?));
+        let log = TransactionLog::init(object_store).await?;
 
-        let log_config = LogConfig {
-            log_path: temp_logdir.path()
-        };
-
-        let log = TransactionLog::init(&log_config).await.unwrap();
         test_commit_push(&log, 1, "a").await;
 
         let head = log.head_mainline().await?;
@@ -583,12 +577,9 @@ mod tests {
     #[tokio::test]
     async fn appends_checkpoint_log() -> CalicoResult<()> {
         let temp_logdir = tempdir().unwrap();
+        let object_store:Arc<Box<dyn ObjectStore>> = Arc::new(Box::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?));
+        let log = TransactionLog::init(object_store).await?;
 
-        let log_config = LogConfig {
-            log_path: temp_logdir.path()
-        };
-
-        let log = TransactionLog::init(&log_config).await?;
         test_commit_push(&log, 1, "a").await;
         test_commit_push(&log, 2, "b").await;
         let saved_commit = test_commit_push(&log, 3, "c").await;
@@ -617,12 +608,9 @@ mod tests {
     #[tokio::test]
     async fn fails_duplicate_checkpoint() -> CalicoResult<()> {
         let temp_logdir = tempdir().unwrap();
+        let object_store:Arc<Box<dyn ObjectStore>> = Arc::new(Box::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?));
+        let log = TransactionLog::init(object_store).await?;
 
-        let log_config = LogConfig {
-            log_path: temp_logdir.path()
-        };
-
-        let log = TransactionLog::init(&log_config).await?;
         let saved_commit = test_commit_push(&log, 1, "a").await;
         log.create_checkpoint(&saved_commit.commit_id, 2, &vec![test_file(5, "d")]).await?;
         let checkpoint_result = log.create_checkpoint(&saved_commit.commit_id, 3, &vec![test_file(5, "d")]).await;

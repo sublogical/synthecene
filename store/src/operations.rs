@@ -2,9 +2,10 @@
 use arrow::record_batch::RecordBatch;
 
 use crate::writer::write_batches;
-use crate::{CalicoTable, CalicoSchema};
+use crate::{CalicoSchema};
 use crate::partition::{ split_batch };
 use crate::result::{CalicoResult};
+use crate::table::CalicoTable;
 
 pub async fn append_operation(calico_table: &CalicoTable, 
                               schema: &CalicoSchema,

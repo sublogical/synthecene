@@ -8,8 +8,9 @@ use futures::stream::{self, StreamExt };
 use parquet::arrow::arrow_writer::ArrowWriter;
 use parquet::file::properties::WriterProperties;
 
-use crate::{CalicoTable, protocol};
+use crate::protocol;
 use crate::result::CalicoResult;
+use crate::table::CalicoTable;
 
 trait StoreWriter {
     fn write_batch(&mut self, batch:RecordBatch);

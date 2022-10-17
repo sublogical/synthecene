@@ -11,9 +11,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::CalicoTable;
 use crate::result::{CalicoResult, CalicoError};
 use crate::protocol;
+use crate::table::CalicoTable;
 
 // Maps the ID column from a record batch into an columns of partition indices for all records
 fn calc_partitions(column_group_config: &protocol::ColumnGroupMetadata, batch: &RecordBatch) -> CalicoResult<UInt64Array> {
@@ -168,13 +168,14 @@ mod tests {
 
         let temp = tempdir().unwrap();
 
-        let table:CalicoTable = CalicoTable::from_local(temp.path()).await.unwrap();
+        let mut table:CalicoTable = CalicoTable::from_local(temp.path()).await.unwrap();
 
         table.add_column_group(protocol::ColumnGroupMetadata { 
             column_group: COLGROUP_1.to_string(),
             partition_spec: Some(protocol::column_group_metadata::PartitionSpec::KeyHash(
                 protocol::KeyHashPartition { num_keys: 0, num_partitions: 2 })
             )}).await.unwrap();
+
         table.add_column_group(protocol::ColumnGroupMetadata { 
             column_group: COLGROUP_2.to_string(),
             partition_spec: Some(protocol::column_group_metadata::PartitionSpec::KeyHash(
