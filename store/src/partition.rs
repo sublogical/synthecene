@@ -1,6 +1,6 @@
 use arrow::array::{BinaryArray, ArrayRef, UInt64Array};
 use arrow::compute::take;
-use arrow::datatypes::{Schema, Field};
+use arrow::datatypes::{Schema};
 use arrow::record_batch::RecordBatch;
 use arrow::error::Result as ArrowResult;
 use futures::Stream;
@@ -34,9 +34,9 @@ fn partition_indices(column_group_config: &protocol::ColumnGroupMetadata, batch:
     let partitions = calc_partitions(column_group_config, batch)?;
     let max_partition:u64 = arrow::compute::max(&partitions).ok_or(CalicoError::PartitionError("unexpected error computing max partition"))?;
     let partitions = partitions.values();
-
-    let mut output:Vec<(u64, Vec<u64>)> = Vec::with_capacity(max_partition as usize);
-    for partition_num in 0..max_partition {
+    
+    let mut output:Vec<(u64, Vec<u64>)> = Vec::with_capacity((max_partition + 1) as usize);
+    for partition_num in 0..=max_partition {
         output.push((partition_num, Vec::new()));
     }
 
@@ -82,14 +82,20 @@ async fn extract_column_groups(table: &CalicoTable, batch: &RecordBatch) -> Cali
 
     let mut column_groups = vec![];
 
+    // Map columns to column group names, keeping ID untouched so that we preserve indexes into the field schema
     for field in batch.schema().fields() {
-        column_groups.push(table.column_group_for_column(field.name()).await?);
+        if field.name() != ID_FIELD {
+            column_groups.push(table.column_group_for_column(field.name()).await?);
+        } else {
+            column_groups.push(ID_FIELD.to_string());
+        }
     }
 
     // now map this to column_group -> vec[indices]
     let output = column_groups.iter().enumerate()
         .group_by(|(_, column_group)| *column_group)
         .into_iter()
+        .filter(|(key, _)| *key != ID_FIELD)
         .map(|(key, group)| (key.clone(), group.map(|(column_index, _)| column_index).collect::<Vec<usize>>()))
         .collect::<Vec<(String, Vec<usize>)>>();
 
@@ -116,7 +122,7 @@ pub async fn split_batch(table: &CalicoTable, batch: &RecordBatch) -> CalicoResu
                 .filter(|(field_index, _)| *field_index == ID_INDEX || column_indices.contains(field_index))
                 .map(|(_, field)| field.to_owned())
                 .collect()));
-
+            
         for (partition_num, row_indices) in partition_indices.iter() {
             let cell_batch = Arc::new(RecordBatch::try_new(
                 column_group_schema.clone(),
@@ -141,8 +147,8 @@ pub async fn split_batch(table: &CalicoTable, batch: &RecordBatch) -> CalicoResu
     Ok(output)
 }
  
-fn split_stream(calico_table: &CalicoTable, 
-                stream: Arc<Box<dyn Stream<Item = ArrowResult<RecordBatch>>>>) -> 
+fn _split_stream(_calico_table: &CalicoTable, 
+                _stream: Arc<Box<dyn Stream<Item = ArrowResult<RecordBatch>>>>) -> 
                 CalicoResult<HashMap<protocol::Tile, Arc<Box<dyn Stream<Item = ArrowResult<RecordBatch>>>>>> {
     todo!("perform same partitioning algorithm but on streams");
 }
@@ -151,7 +157,6 @@ fn split_stream(calico_table: &CalicoTable,
 #[cfg(test)]
 mod tests {
     use arrow::array::{ Float32Array, BinaryArray };
-    use maplit::hashmap;
     use tempfile::tempdir;
     
     use crate::partition::*;
@@ -183,7 +188,7 @@ mod tests {
             )}).await.unwrap();
 
         table.add_column(protocol::ColumnMetadata { column: FIELD_A.to_string(), column_group: COLGROUP_1.to_string() }).await.unwrap();
-        table.add_column(protocol::ColumnMetadata { column: FIELD_A.to_string(), column_group: COLGROUP_1.to_string() }).await.unwrap();
+        table.add_column(protocol::ColumnMetadata { column: FIELD_B.to_string(), column_group: COLGROUP_1.to_string() }).await.unwrap();
         table.add_column(protocol::ColumnMetadata { column: FIELD_C.to_string(), column_group: COLGROUP_2.to_string() }).await.unwrap();
         table.add_column(protocol::ColumnMetadata { column: FIELD_D.to_string(), column_group: COLGROUP_2.to_string() }).await.unwrap();
 

@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::hash::Hash;
 use std::sync::Arc;
 use object_store::ObjectStore;
 use object_store::local::LocalFileSystem;
@@ -45,7 +44,7 @@ impl CalicoTable {
         Ok(self.object_store.clone())
     }
 
-    pub async fn log_store_for(&self, tile: &protocol::Tile) -> CalicoResult<Arc<Box<dyn ObjectStore>>> {
+    pub async fn log_store_for(&self, _tile: &protocol::Tile) -> CalicoResult<Arc<Box<dyn ObjectStore>>> {
         Ok(self.object_store.clone())
     }
 
@@ -53,12 +52,13 @@ impl CalicoTable {
         Ok(self.log.clone())
     }
 
-    pub async fn object_path_for(&self, tile: &protocol::Tile) -> CalicoResult<ObjectStorePath> {
+    pub async fn object_path_for(&self, _tile: &protocol::Tile) -> CalicoResult<ObjectStorePath> {
         todo!()
     }
 
-    pub async fn column_group_for_column(&self, name: &str) -> CalicoResult<String> {
-        todo!()
+    pub async fn column_group_for_column(&self, column: &str) -> CalicoResult<String> {
+        let col_meta = self.column_group(column).await?;
+        Ok(col_meta.column_group.clone())
     }
 
     pub async fn column_group_meta(&self, column_group: &str) -> CalicoResult<&protocol::ColumnGroupMetadata> {

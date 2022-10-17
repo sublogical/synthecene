@@ -1,13 +1,11 @@
 use bytes::Bytes;
 use futures::{TryStreamExt, future};
 use log::info;
-use object_store::local::LocalFileSystem;
 use object_store::ObjectStore;
 use object_store::path::Path as ObjectStorePath;
 use prost::Message;
 use rand::Rng;
 use std::ops::Deref;
-use std::path::Path;
 use std::sync::Arc;
 
 use crate::protocol;
@@ -15,10 +13,6 @@ use crate::result::{CalicoResult, CalicoError};
 
 type BranchRef<'a> = &'a str;
 pub const MAINLINE: &str = "mainline";
-
-pub struct LogConfig<'a> {
-    log_path: &'a Path
-}
 
 pub struct TableView<'a> {
     checkpoint: Option<Checkpoint<'a>>,
@@ -175,14 +169,8 @@ impl TransactionLog {
         Ok(log)
     }
 
-    fn get_object_store(log_config: &LogConfig) -> CalicoResult<Box<dyn ObjectStore>> {
-        Ok(Box::new(LocalFileSystem::new_with_prefix(log_config.log_path)?))
-    }
-    
     pub async fn head<'a>(&self, branch: BranchRef<'a>) -> CalicoResult<Commit> {
         let commit_id = self.head_id(branch).await?;
-
-        println!("HEAD ID = {:?}", commit_id);
         let commit = self.get_commit(&commit_id).await?;
 
         Ok(commit)
@@ -474,7 +462,7 @@ mod tests {
     use std::fs;
     use std::sync::Arc;
 
-    use crate::log::{TransactionLog, LogConfig, Commit };
+    use crate::log::{TransactionLog, Commit };
     use crate::protocol;
     use crate::result::CalicoResult;
 
@@ -516,7 +504,7 @@ mod tests {
             col_expr, 
             vec![file]).await.unwrap();
 
-        let new_head = log.fast_forward(MAINLINE, &commit.commit_id).await.unwrap();
+        let _new_head = log.fast_forward(MAINLINE, &commit.commit_id).await.unwrap();
 
         commit
     }
