@@ -11,7 +11,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::protocol;
-use crate::partition::ColumnRef;
 use crate::result::{CalicoResult, CalicoError};
 
 type BranchRef<'a> = &'a str;
@@ -244,8 +243,8 @@ impl TransactionLog {
                          _committer: Option<String>,
                          _commit_message: Option<String>,
                          commit_timestamp: u64,
-                         columns: Vec<ColumnRef>,
-                         _column_expressions: Vec<(ColumnRef, String)>,
+                         columns: Vec<String>,
+                         _column_expressions: Vec<(String, String)>,
                          files: Vec<protocol::File>) -> CalicoResult<Commit> {
         
         let mut commit = protocol::Commit::default();
@@ -393,6 +392,7 @@ impl TransactionLog {
 
     //--------------------------------------------------------------------------
     // Object Store Helpers
+    // todo: move to object.rs?
     //--------------------------------------------------------------------------
     
     const REF_DIR: &'static str = "refs";

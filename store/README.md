@@ -13,6 +13,15 @@ independently managed on all dimensions of configuration.
 Physical storage can be file-based, object-based or table-based, and can leverage 
 any of the cloud storage providers.
 
+## Data Model
+```
+/{column-group}/{column}
+```
+
+* column-group level configuration
+  * transaction log level (global, column-group, partition, column or tile)
+
+
 ## Transaction Log
 
 ```
@@ -38,46 +47,73 @@ UPDATE
 
 
 
+
 ## TODO List
-* Independence from Spark
-* Tile-Stats
-  * Support automatica tile-level statistical aggregations, defined in SQL
-  * Support optimization of analytical SQL queries using tile-stats
-* Streaming Writes
-  * Support streaming write service
-  * Support streaming writes via kafka topic
+* CLI
+  * Create Table
+  * Add Column-Group
+    * From params
+    * From args
+  * Add Column
+    * From params
+    * From args
+  * Add data
+    * From CSV
+    * From JSON
+    * From Parquet
+* Importers
+  * Common Crawl
+  * Wikidata
+* Operations
+  * Basic Write
+  * Checkpoint
+  * Garbage Collect Data
+    * Unreferenced Data Objects
+    * Old Tmp Objects
+    * Pre-Checkpoint Commits
+    * Aged-Out Checkpoints
+  * Write with Operator
+  * Squash
 * Transactions
-  * Support transaction log tree
-  * Support branch labels (e.g. mainline)
-  * Support operations with set of parquet files + update expression
-  * Support parallel checkpoint operations
   * Support squash + rebase to combine lots of small updates to a single update
   * Support vaccuum / garbage collection on pre-checkpoint commits
   * Support vaccuum / garbage collection on unreferenced objects
-  * Support local-file db transaction log
-  * Support remote-file db 
-  * Support dynamo db transaction log
-* Storage Interfaces
-  * Support local-file storage
-  * Support s3 storage
+  * ~~Support transaction log tree~~
+  * ~~Support branch labels (e.g. mainline)~~
+  * ~~Support operations with set of parquet files + update expression~~
+  * ~~Support parallel checkpoint operations~~
+* ObjectStore Interfaces
+  * Support dynamo db storage
+  * Support redis storage
   * Support remote-file (sshfs/scp) storage
   * Support hdfs storage
   * Support lustr storage
-  * Support dynamo db storage
-  * Support in-memory storage (for pre-commit read consistency)
+  * ~~Support local-file storage~~
+  * ~~Support s3 storage~~ (untested)
+  * ~~Support in-memory storage (for pre-commit read consistency)~~ (untested)
 * Partitioning
-  * ~~Support column-group based partition definition~~
-  * ~~Support hash-based partitions~~
   * Support time-series partition scheme
   * Support multipartition (e.g. time series + hash)
+  * ~~Support column-group based partition definition~~
+  * ~~Support hash-based partitions~~
   * ~~Support partitioning on one or more components of key-space~~
   * ~~Support column partitioning~~
-* Writers
+* Write APIs
   * Support direct multi-partition writes from Rust
   * Support direct multi-partition writes from Python
   * Support direct multi-partition writes from Java/Scala
   * Support writes from Flink
   * Support writes from Spark
+* Tile-Stats
+  * Support automatica tile-level statistical aggregations, defined in SQL
+  * Support optimization of analytical SQL queries using tile-stats
+* Streaming Writes
+  * Support streaming partitioning
+  * Support streaming compaction
+  * Support streaming write service (arrow flight, grpc)
+  * Support streaming writes via kafka topic
+  * Preserve kafka commits while in-flight
+  * Support in-memory queries on uncommitted transactions
 * Readers
   * Integrate with DataFusion for reads
   * Support reading a tile from Checkpoint + Vec<Update>

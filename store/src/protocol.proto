@@ -6,11 +6,6 @@ enum LogProtocolVersion {
     VERSION_0 = 0;
 }
 
-message Tile {
-    uint64 partition_num = 1;
-    string column_group = 2;
-}
-
 message Ref {
     string label = 1;
     uint64 ref_seq = 2;
@@ -63,4 +58,30 @@ message Checkpoint {
 
     File metadata_objects = 4;
 }
+
+message Tile {
+    uint64 partition_num = 1;
+    string column_group = 2;
+}
+
+message KeyHashPartition {
+    uint32 num_keys = 1;
+    uint64 num_partitions = 2;
+}
+
+message ColumnGroupMetadata {
+    string column_group = 1;
+    oneof partition_spec {
+        KeyHashPartition key_hash = 2;
+    }
+}
+
+message ColumnMetadata {
+    string column = 1;
+    string column_group = 2;
+}
+
+
+
+
 
