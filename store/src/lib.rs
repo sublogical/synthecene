@@ -6,7 +6,7 @@ pub mod protocol {
 mod writer;
 
 pub mod log;
-//pub mod object;
+pub mod object;
 pub mod operations;
 pub mod partition;
 pub mod table;

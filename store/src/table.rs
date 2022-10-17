@@ -48,12 +48,16 @@ impl CalicoTable {
         Ok(self.object_store.clone())
     }
 
+    pub async fn default_object_store(&self, ) -> CalicoResult<Arc<Box<dyn ObjectStore>>> {
+        Ok(self.object_store.clone())
+    }
+
     pub async fn transaction_log_for(&self, _tile: &protocol::Tile) -> CalicoResult<Arc<TransactionLog>> {
         Ok(self.log.clone())
     }
 
-    pub async fn object_path_for(&self, _tile: &protocol::Tile) -> CalicoResult<ObjectStorePath> {
-        todo!()
+    pub async fn default_transaction_log(&self) ->  CalicoResult<Arc<TransactionLog>> {
+        Ok(self.log.clone())
     }
 
     pub async fn column_group_for_column(&self, column: &str) -> CalicoResult<String> {

@@ -8,6 +8,7 @@ use futures::stream::{self, StreamExt };
 use parquet::arrow::arrow_writer::ArrowWriter;
 use parquet::file::properties::WriterProperties;
 
+use crate::object::object_path_for;
 use crate::protocol;
 use crate::result::CalicoResult;
 use crate::table::CalicoTable;
@@ -52,7 +53,7 @@ pub(crate) fn write_batch_to_bytes(batch: Arc<RecordBatch>) -> CalicoResult<Byte
 
 pub(crate) async fn write_batch(calico_table: &CalicoTable, tile: &protocol::Tile, batch: Arc<RecordBatch>) -> CalicoResult<protocol::File> {
     let data_store = calico_table.data_store_for(tile).await?;
-    let object_path = calico_table.object_path_for(&tile).await?;
+    let object_path = object_path_for(&tile)?;
 
     let serialized_batch = write_batch_to_bytes(batch)?;
 

@@ -2,34 +2,17 @@ use std::sync::Arc;
 
 use arrow::record_batch::RecordBatch;
 use futures::{future, Future};
+use object_store::path::Path as ObjectStorePath;
+use rand::Rng;
 
-use crate::result::{CalicoResult, CalicoError};
-
-
-pub fn to_path(path_prefix: &str, column_group: &str, partition_num: u64) -> String {
-    format!("{}/{}/{:08x}", path_prefix, column_group, partition_num)
-}
-
-pub struct ObjectStore {
-}
-
-impl ObjectStore {
-    pub fn get_writer(&self) -> ObjectWriter {
-        ObjectWriter {}
-    }
-}
-
-pub struct ObjectWriter {
-}
+use crate::{result::{CalicoResult, CalicoError}, protocol};
 
 
+const OBJECT_PATH: &'static str = "objects";
 
-impl <'a> ObjectWriter {
-    pub fn write(&self, tile: Tile, _batch: Arc<RecordBatch>) -> impl Future<Output=CalicoResult<(Tile, String)>> + 'a {
-        let path = to_path("soo", &tile.column_group, tile.partition_num);
-
-        async {
-            Ok::<_,CalicoError>((tile, path))
-        }
-    }
+pub fn object_path_for<'a>(tile: &protocol::Tile) ->  CalicoResult<ObjectStorePath> {
+    let object_id = rand::thread_rng().gen::<[u8; 20]>().to_vec();
+    let hexencode = hex::encode(&object_id);
+    let path: ObjectStorePath = format!("{}/{}",OBJECT_PATH, hexencode).try_into().unwrap();
+    Ok(path)
 }

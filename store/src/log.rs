@@ -54,7 +54,7 @@ impl TableView<'_> {
 
 #[derive(Clone, Debug)]
 pub struct Commit<'a>{
-    commit: protocol::Commit,
+    pub commit: protocol::Commit,
     log: &'a TransactionLog
 }
 
@@ -427,14 +427,11 @@ impl TransactionLog {
 
         // todo: support tmp cleanup in GC
         
-        println!("-----MOVE TO: {}", path);
         match self.object_store.copy_if_not_exists(&tmp_path, &path).await {
             Ok(_) => Ok(()),
             Err(e) => {
-                println!("-----ERR CLEANUP {:?}", e);
                 // clean up 
                 self.object_store.delete(&tmp_path).await?;
-                println!("-----CLEANEDUP {:?}", e);
                 Err(CalicoError::ObjectStoreError(e))
             },
         }
@@ -444,8 +441,6 @@ impl TransactionLog {
     async fn init_dir<'a>(&self, path:&'a str) -> CalicoResult<()> {
         let path: ObjectStorePath = format!("{}/{}", path, Self::META_FILE).try_into().unwrap();
         let data = Bytes::from("{}");
-
-        println!("-----INIT: {}", path);
 
         self.object_store.put(&path, data).await?;
 
