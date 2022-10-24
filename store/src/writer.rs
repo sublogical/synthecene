@@ -11,7 +11,7 @@ use parquet::file::properties::WriterProperties;
 use crate::object::object_path_for;
 use crate::protocol;
 use crate::result::CalicoResult;
-use crate::table::CalicoTable;
+use crate::table::TableStore;
 
 trait StoreWriter {
     fn write_batch(&mut self, batch:RecordBatch);
@@ -51,8 +51,8 @@ pub(crate) fn write_batch_to_bytes(batch: Arc<RecordBatch>) -> CalicoResult<Byte
     Ok(Bytes::from(buffer))
 }
 
-pub(crate) async fn write_batch(calico_table: &CalicoTable, tile: &protocol::Tile, batch: Arc<RecordBatch>) -> CalicoResult<protocol::File> {
-    let data_store = calico_table.data_store_for(tile).await?;
+pub(crate) async fn write_batch(table_store: &TableStore, tile: &protocol::Tile, batch: Arc<RecordBatch>) -> CalicoResult<protocol::File> {
+    let data_store = table_store.data_store_for(tile).await?;
     let object_path = object_path_for(&tile)?;
 
     let serialized_batch = write_batch_to_bytes(batch)?;
@@ -71,14 +71,14 @@ pub(crate) async fn write_batch(calico_table: &CalicoTable, tile: &protocol::Til
 }
 
 // Write all the split batches in parallel to the object store(s)
-pub(crate) async fn write_batches(calico_table: &CalicoTable, 
+pub(crate) async fn write_batches(table_store: &TableStore, 
                                   split_batches: &Vec<(protocol::Tile, Arc<RecordBatch>)>) -> 
                                   CalicoResult<Vec<(protocol::Tile, protocol::File)>> {
 
     // stream all of the batches for write
     let output = stream::iter(split_batches)
         .then(|(tile, batch)| async move {
-            let prot_file = write_batch(&calico_table, &tile, batch.clone()).await?;
+            let prot_file = write_batch(&table_store, &tile, batch.clone()).await?;
             let tuple = (tile.clone(), prot_file);
 
             Ok(tuple)

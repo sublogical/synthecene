@@ -25,8 +25,8 @@ message Commit {
     // timestamp commit was created
     uint64 timestamp = 7;
 
-    // path to parquet object files for this update
-    repeated File file = 8;
+    // commit -> [tile -> [files]]
+    repeated TileFiles tile_files = 8;
 
     // Columns updated in this commit
     repeated string columns = 9;
@@ -35,6 +35,11 @@ message Commit {
     map<string, string> expression_map = 10;
 }
 
+message TileFiles {
+    Tile tile = 1;
+    // path to parquet object files for this update
+    repeated File file = 2;
+}
 enum FileType {
     Data = 0;
     Metadata = 1;
@@ -53,8 +58,8 @@ message Checkpoint {
     // timestamp checkpoint was created
     uint64 timestamp = 2;
 
-    // path to parquet object files for this checkpoint
-    repeated File data_objects = 3;
+    // checkpoint -> [tile -> [files]]
+    repeated TileFiles tile_files = 8;
 
     File metadata_objects = 4;
 }

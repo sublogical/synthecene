@@ -1,3 +1,4 @@
+use async_recursion::async_recursion;
 use bytes::Bytes;
 use futures::{TryStreamExt, future};
 use log::info;
@@ -14,6 +15,11 @@ use crate::result::{CalicoResult, CalicoError};
 type BranchRef<'a> = &'a str;
 pub const MAINLINE: &str = "mainline";
 
+
+pub enum TableAction {
+    Checkpoint(protocol::Checkpoint),
+    Commit(protocol::Commit)
+}
 pub struct TableView<'a> {
     checkpoint: Option<Checkpoint<'a>>,
     history: Vec<Commit<'a>>,
@@ -47,6 +53,19 @@ impl TableView<'_> {
             checkpoint: None,
             history: since_checkpoint
         });
+    }
+
+    pub fn actions(&self) -> Vec<TableAction> {
+        let mut result:Vec<TableAction> = Vec::with_capacity(self.history.len() + 1);
+
+        if let Some(checkpoint) = &self.checkpoint {
+            result.push(TableAction::Checkpoint(checkpoint.checkpoint.clone()));
+        }
+        for commit in &self.history {
+            result.push(TableAction::Commit(commit.commit.clone()))
+        }
+
+        result
     }
 }
 
@@ -105,6 +124,10 @@ impl Commit<'_> {
         self.log.get_commit(&self.parent_id).await
     }
 
+    pub async fn at_checkpoint(&self) -> CalicoResult<Commit> {
+        todo!()
+    }
+
     // walks the default parent heirarchy back until it finds the commit that 
     // represents the state of this lineage at the specified timestamp, ie the
     // first commit found at a timestamp equal to or less than <timestamp>
@@ -145,12 +168,42 @@ impl Deref for Checkpoint<'_> {
 }
 
 #[derive(Clone, Debug)]
+pub enum ReferencePoint {
+    // nth Ancestor of a reference point
+    Ancestor(Box<ReferencePoint>, u64),
+    // Specific commit
+    Commit(Vec<u8>),
+    // Head of main
+    Mainline,
+    // Immediate parent of a reference point
+    Parent(Box<ReferencePoint>),
+    // Rewinds from a reference point to find the last checkpoint
+    PriorCheckpoint(Box<ReferencePoint>),
+    // Named reference point
+    Ref(String),
+    // Rewinds from a reference point to find the state at timestamp
+    TimestampFrom(Box<ReferencePoint>, u64),
+}
+
+impl From<protocol::Commit> for ReferencePoint {
+    fn from(commit: protocol::Commit) -> Self {
+        ReferencePoint::Commit(commit.commit_id.to_vec())
+    }
+}
+
+impl ReferencePoint {
+    fn parse(reference_str: &str) -> Self {
+        todo!()
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct TransactionLog {
-    object_store: Arc<Box<dyn ObjectStore>>
+    object_store: Arc<dyn ObjectStore>
 }
 
 impl TransactionLog {
-    pub async fn init(object_store: Arc<Box<dyn ObjectStore>>) -> CalicoResult<TransactionLog> {
+    pub async fn init(object_store: Arc<dyn ObjectStore>) -> CalicoResult<TransactionLog> {
         let log = TransactionLog{ object_store };
 
         log.init_dir(Self::REF_DIR).await?;
@@ -163,8 +216,8 @@ impl TransactionLog {
         Ok(log)
     }
 
-    pub fn open(object_store: Arc<Box<dyn ObjectStore>>) -> CalicoResult<TransactionLog> {
-        let log = TransactionLog{ object_store };
+    pub fn open(object_store: Arc<dyn ObjectStore>) -> CalicoResult<TransactionLog> {
+        let log = TransactionLog { object_store };
         // todo!("check to see if the path exists and is initialized, panic if not");
         Ok(log)
     }
@@ -204,6 +257,48 @@ impl TransactionLog {
         self.put_ref(branch, prot_ref).await
     }
 
+    #[async_recursion]
+    pub async fn find_commit(&self, reference: &ReferencePoint) -> CalicoResult<Commit> {
+        match reference {
+            ReferencePoint::Ref(tag) => {
+                let reference = self.get_last_ref(&tag).await?;
+                self.get_commit(&reference.commit_id).await
+            },
+            ReferencePoint::Commit(commit_id) => {
+                self.get_commit(&commit_id).await
+            },            
+            ReferencePoint::TimestampFrom(reference_point, timestamp) => {
+                let commit = self.find_commit(reference_point).await?;
+                let timestamp_commit = commit.at_timestamp(*timestamp).await?.clone();
+                Ok(Commit {
+                    commit: timestamp_commit.commit,
+                    log: self
+                })
+            },
+            ReferencePoint::Ancestor(_, _) => {
+                todo!()
+            },
+            ReferencePoint::Mainline => {
+                self.head_mainline().await
+            }
+            ReferencePoint::Parent(reference_point) => {
+                let commit = self.find_commit(reference_point).await?;
+                let parent = commit.parent().await?.to_owned();
+                Ok(Commit {
+                    commit: parent.commit,
+                    log: self
+                })
+            },
+            ReferencePoint::PriorCheckpoint(reference_point) => {
+                let commit = self.find_commit(reference_point).await?;
+                let parent = commit.at_checkpoint().await?.to_owned();
+                Ok(Commit {
+                    commit: parent.commit,
+                    log: self
+                })
+            }
+        }
+    }
 
     pub async fn get_commit(&self, commit_id: &Vec<u8>) -> CalicoResult<Commit> {
         let path = Self::commit_path(&commit_id)?;
@@ -233,7 +328,7 @@ impl TransactionLog {
                          commit_timestamp: u64,
                          columns: Vec<String>,
                          _column_expressions: Vec<(String, String)>,
-                         files: Vec<protocol::File>) -> CalicoResult<Commit> {
+                         tile_files: Vec<protocol::TileFiles>) -> CalicoResult<Commit> {
         
         let mut commit = protocol::Commit::default();
 
@@ -243,7 +338,7 @@ impl TransactionLog {
         commit.parent_id = parent_id.to_vec();
         commit.timestamp = commit_timestamp;
         commit.columns = columns;
-        commit.file = files;
+        commit.tile_files = tile_files;
 
         let expected_len = commit.encoded_len();
 
@@ -332,13 +427,13 @@ impl TransactionLog {
     pub async fn create_checkpoint(&self, 
                                    commit_id: &Vec<u8>,
                                    timestamp: u64,
-                                   data_objects: &Vec<protocol::File>) -> CalicoResult<Checkpoint> {
+                                   tile_files: &Vec<protocol::TileFiles>) -> CalicoResult<Checkpoint> {
 
         let mut checkpoint = protocol::Checkpoint::default();
 
         checkpoint.commit_id = commit_id.to_vec();
         checkpoint.timestamp = timestamp;
-        checkpoint.data_objects = data_objects.to_vec();
+        checkpoint.tile_files = tile_files.to_vec();
 
         let path = Self::checkpoint_path(commit_id)?;
 
@@ -466,7 +561,7 @@ mod tests {
     #[tokio::test]
     async fn create_new_transaction_log() -> CalicoResult<()> {
         let temp_logdir = tempdir().unwrap();
-        let object_store:Arc<Box<dyn ObjectStore>> = Arc::new(Box::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?));
+        let object_store:Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?);
         let log = TransactionLog::init(object_store).await?;
 
         let head_result = log.head_mainline().await;
@@ -475,19 +570,25 @@ mod tests {
         Ok(())
     }
 
-    fn test_file(timestamp: u64, filename: &str) -> protocol::File {
-        protocol::File {
-            file_path: filename.to_string(),
-            file_type: protocol::FileType::Data as i32,
-            file_size: 1,
-            update_time: timestamp
+    fn test_file(timestamp: u64, partition_num: u64, column_group: &str, filename: &str) -> protocol::TileFiles {
+        protocol::TileFiles {
+            tile: Some(protocol::Tile {
+                partition_num,
+                column_group: column_group.to_string(),
+            }),
+            file: vec![protocol::File {
+                file_path: filename.to_string(),
+                file_type: protocol::FileType::Data as i32,
+                file_size: 1,
+                update_time: timestamp
+            }]
         }
     }
-    async fn test_commit_push<'a>(log:&'a TransactionLog, timestamp: u64, filename: &str) -> Commit<'a> {
+    async fn test_commit_push<'a>(log:&'a TransactionLog, timestamp: u64, partition_num: u64, column_group: &str, filename: &str) -> Commit<'a> {
         let cols = vec!["a".to_string()];
         let col_expr = vec![("a".to_string(), "$new".to_string())];
         let head_id = log.head_id_mainline().await.unwrap();
-        let file = test_file(timestamp, filename);
+        let file = test_file(timestamp, partition_num, column_group, filename);
 
         let commit = log.create_commit(
             &head_id.to_vec(), 
@@ -507,10 +608,10 @@ mod tests {
     #[tokio::test]
     async fn round_trip() -> CalicoResult<()> {
         let temp_logdir = tempdir().unwrap();
-        let object_store:Arc<Box<dyn ObjectStore>> = Arc::new(Box::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?));
+        let object_store:Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?);
         let log = TransactionLog::init(object_store).await?;
 
-        let commit = test_commit_push(&log, 1, "a").await;
+        let commit = test_commit_push(&log, 1, 0, "x", "a").await;
         let commit_dir = temp_logdir.path().join("commit");
         let commit_file = fs::read_dir(commit_dir).unwrap().nth(0).unwrap().unwrap();
         let commit_size = fs::metadata(commit_file.path()).unwrap().len();
@@ -520,7 +621,7 @@ mod tests {
         let read_commit = log.get_commit(&commit.commit_id).await?;
 
         assert_eq!(read_commit.timestamp, 1);
-        assert_eq!(read_commit.file[0].file_path, "a");
+        assert_eq!(read_commit.tile_files[0].file[0].file_path, "a");
 
         Ok(())
     }
@@ -531,10 +632,10 @@ mod tests {
     async fn appends_in_log() -> CalicoResult<()> {
 
         let temp_logdir = tempdir().unwrap();
-        let object_store:Arc<Box<dyn ObjectStore>> = Arc::new(Box::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?));
+        let object_store:Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?);
         let log = TransactionLog::init(object_store).await?;
 
-        test_commit_push(&log, 1, "a").await;
+        test_commit_push(&log, 1, 0, "x", "a").await;
 
         let head = log.head_mainline().await?;
         let history = head.history(100).await.unwrap();
@@ -544,7 +645,7 @@ mod tests {
         assert!(!table.has_checkpoint());
         assert_eq!(table.history.len(), 1);
 
-        test_commit_push(&log, 1, "b").await;
+        test_commit_push(&log, 1, 0, "x", "b").await;
 
         let head = log.head_mainline().await?;
         let history = head.history(100).await.unwrap();
@@ -560,14 +661,14 @@ mod tests {
     #[tokio::test]
     async fn appends_checkpoint_log() -> CalicoResult<()> {
         let temp_logdir = tempdir().unwrap();
-        let object_store:Arc<Box<dyn ObjectStore>> = Arc::new(Box::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?));
+        let object_store:Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?);
         let log = TransactionLog::init(object_store).await?;
 
-        test_commit_push(&log, 1, "a").await;
-        test_commit_push(&log, 2, "b").await;
-        let saved_commit = test_commit_push(&log, 3, "c").await;
-        test_commit_push(&log, 4, "e").await;
-        log.create_checkpoint(&saved_commit.commit_id, 5, &vec![test_file(5, "d")]).await?;
+        test_commit_push(&log, 1, 0, "x", "a").await;
+        test_commit_push(&log, 2, 0, "x", "b").await;
+        let saved_commit = test_commit_push(&log, 3, 0, "x", "c").await;
+        test_commit_push(&log, 4, 0, "x", "e").await;
+        log.create_checkpoint(&saved_commit.commit_id, 5, &vec![test_file(5, 0, "x", "d")]).await?;
 
         let head = log.head_mainline().await?;
         let history = head.history(100).await?;
@@ -591,12 +692,12 @@ mod tests {
     #[tokio::test]
     async fn fails_duplicate_checkpoint() -> CalicoResult<()> {
         let temp_logdir = tempdir().unwrap();
-        let object_store:Arc<Box<dyn ObjectStore>> = Arc::new(Box::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?));
+        let object_store:Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?);
         let log = TransactionLog::init(object_store).await?;
 
-        let saved_commit = test_commit_push(&log, 1, "a").await;
-        log.create_checkpoint(&saved_commit.commit_id, 2, &vec![test_file(5, "d")]).await?;
-        let checkpoint_result = log.create_checkpoint(&saved_commit.commit_id, 3, &vec![test_file(5, "d")]).await;
+        let saved_commit = test_commit_push(&log, 1, 0, "x", "a").await;
+        log.create_checkpoint(&saved_commit.commit_id, 2, &vec![test_file(5, 0, "x", "d")]).await?;
+        let checkpoint_result = log.create_checkpoint(&saved_commit.commit_id, 3, &vec![test_file(5, 0, "x", "d")]).await;
 
         assert!(checkpoint_result.is_err());
 

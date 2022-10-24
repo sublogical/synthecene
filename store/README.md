@@ -36,6 +36,11 @@ UPDATE
 007     001     "a"         set             "a"
 ```
 
+* transactions are performed at a column-group level, or 
+* checkpoints are performed at a column-group level
+
+
+
 ```
 { action: append-record, object="001" version="1" }
 { action: append-record, object="002" version="2" }
@@ -49,6 +54,12 @@ UPDATE
 
 
 ## TODO List
+* Immediate
+  * Move all Files in a commit to a single transaction
+  * Include tile in commits & checkpoints
+  * TableView should be on a column-group
+  * Implement Commit|Checkpoint to Table (Vec<Vec<PartitionedFile>>)
+  * Move partitioning to use discrete values of a set of partition columns
 * CLI
   * Create Table
   * Add Column-Group
@@ -61,11 +72,18 @@ UPDATE
     * From CSV
     * From JSON
     * From Parquet
+  * Read data
+    * dump table
+    * timetravel view
+    * to CSV
+    * to JSON
+    * to parquet
 * Importers
   * Common Crawl
   * Wikidata
 * Operations
-  * Basic Write
+  * ~~Basic Write~~
+  * Read/dDump
   * Checkpoint
   * Garbage Collect Data
     * Unreferenced Data Objects
@@ -92,8 +110,10 @@ UPDATE
   * ~~Support s3 storage~~ (untested)
   * ~~Support in-memory storage (for pre-commit read consistency)~~ (untested)
 * Partitioning
-  * Support time-series partition scheme
-  * Support multipartition (e.g. time series + hash)
+  * Support column-based partitions
+  * Support multi-column partitions
+  * Support bucketing/clustering
+  * Support z-order
   * ~~Support column-group based partition definition~~
   * ~~Support hash-based partitions~~
   * ~~Support partitioning on one or more components of key-space~~

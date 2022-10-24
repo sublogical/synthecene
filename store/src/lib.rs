@@ -16,6 +16,8 @@ pub struct CalicoSchema {
 }
 
 pub mod result {
+    use std::{error::Error, fmt::Display};
+
     use arrow::error::ArrowError;
     use parquet::errors::ParquetError;
     use prost::{DecodeError, EncodeError};
@@ -37,6 +39,25 @@ pub mod result {
         TransactionLogNotPresent(String),
         UnknownColumn(String),
         UnknownColumnGroup(String),
+    }
+
+    impl Display for CalicoError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{:?}", self)
+        }
+    }
+    impl Error for CalicoError {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            match *self {
+                Self::ArrowMessedUp(ref e) => Some(e),
+                Self::JoinFailed(ref e) => Some(e),
+                Self::EncodeError(ref e) => Some(e),
+                Self::DecodeError(ref e) => Some(e),
+                Self::ObjectStoreError(ref e) => Some(e),
+                Self::ParquetError(ref e) => Some(e),
+                _ => None
+            }
+        }
     }
 
     impl From<ArrowError> for CalicoError {

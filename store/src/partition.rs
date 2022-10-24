@@ -1,8 +1,9 @@
 use arrow::array::{BinaryArray, ArrayRef, UInt64Array};
 use arrow::compute::take;
-use arrow::datatypes::{Schema};
+use arrow::datatypes::{Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use arrow::error::Result as ArrowResult;
+use datafusion::physical_plan::SendableRecordBatchStream;
 use futures::Stream;
 use itertools::Itertools;
 use log::info;
@@ -13,7 +14,7 @@ use std::sync::Arc;
 
 use crate::result::{CalicoResult, CalicoError};
 use crate::protocol;
-use crate::table::CalicoTable;
+use crate::table::{Table, TableStore, ID_INDEX};
 
 // Maps the ID column from a record batch into an columns of partition indices for all records
 fn calc_partitions(column_group_config: &protocol::ColumnGroupMetadata, batch: &RecordBatch) -> CalicoResult<UInt64Array> {
@@ -77,42 +78,14 @@ fn key_hash_partition(key_hash: &protocol::KeyHashPartition, key: &[u8]) -> u64 
     return (s.finish() % key_hash.num_partitions as u64).try_into().unwrap();
 }
 
-// Use Table configuration to determine the map of column groups to columns for the table
-async fn extract_column_groups(table: &CalicoTable, batch: &RecordBatch) -> CalicoResult<Vec<(String, Vec<usize>)>> {
-
-    let mut column_groups = vec![];
-
-    // Map columns to column group names, keeping ID untouched so that we preserve indexes into the field schema
-    for field in batch.schema().fields() {
-        if field.name() != ID_FIELD {
-            column_groups.push(table.column_group_for_column(field.name()).await?);
-        } else {
-            column_groups.push(ID_FIELD.to_string());
-        }
-    }
-
-    // now map this to column_group -> vec[indices]
-    let output = column_groups.iter().enumerate()
-        .group_by(|(_, column_group)| *column_group)
-        .into_iter()
-        .filter(|(key, _)| *key != ID_FIELD)
-        .map(|(key, group)| (key.clone(), group.map(|(column_index, _)| column_index).collect::<Vec<usize>>()))
-        .collect::<Vec<(String, Vec<usize>)>>();
-
-    Ok(output)
-}
-
-pub const ID_INDEX:usize = 0;
-pub const ID_FIELD:&str = "id";
-
-pub async fn split_batch(table: &CalicoTable, batch: &RecordBatch) -> CalicoResult<Vec<(protocol::Tile, Arc<RecordBatch>)>> {
-    let column_groups = extract_column_groups(table, batch).await?;
+pub async fn split_batch(table_store: &TableStore, batch: &RecordBatch) -> CalicoResult<Vec<(protocol::Tile, Arc<RecordBatch>)>> {
+    let column_groups = table_store.extract_column_groups(batch.schema()).await?;
 
     let mut output = Vec::new();
 
     for (column_group, column_indices) in column_groups.iter() {
         info!("column group: {} has indices {:?}", column_group, column_indices);
-        let config = table.column_group_meta(column_group).await?;
+        let config = table_store.column_group_meta(column_group).await?;
         let partition_indices = partition_indices(&config, batch)?;
 
         let column_group_schema = Arc::new(Schema::new(
@@ -136,7 +109,7 @@ pub async fn split_batch(table: &CalicoTable, batch: &RecordBatch) -> CalicoResu
             )?);
 
             let tile = protocol::Tile {
-                column_group: column_group.clone(),
+                column_group: column_group.to_string(),
                 partition_num: *partition_num
             };
 
@@ -147,9 +120,9 @@ pub async fn split_batch(table: &CalicoTable, batch: &RecordBatch) -> CalicoResu
     Ok(output)
 }
  
-fn _split_stream(_calico_table: &CalicoTable, 
-                _stream: Arc<Box<dyn Stream<Item = ArrowResult<RecordBatch>>>>) -> 
-                CalicoResult<HashMap<protocol::Tile, Arc<Box<dyn Stream<Item = ArrowResult<RecordBatch>>>>>> {
+fn _split_stream(_table_store: &TableStore, 
+                _stream: SendableRecordBatchStream) -> 
+                CalicoResult<HashMap<protocol::Tile, SendableRecordBatchStream>> {
     todo!("perform same partitioning algorithm but on streams");
 }
 
@@ -157,9 +130,11 @@ fn _split_stream(_calico_table: &CalicoTable,
 #[cfg(test)]
 mod tests {
     use arrow::array::{ Float32Array, BinaryArray };
+    use datafusion::{execution::runtime_env::RuntimeEnv, datasource::object_store::{ObjectStoreRegistry, ObjectStoreUrl}};
+    use object_store::{ObjectStore, local::LocalFileSystem};
     use tempfile::tempdir;
     
-    use crate::partition::*;
+    use crate::{partition::*, table::ID_FIELD};
 
     #[tokio::test]
     async fn test_split_batch() {
@@ -173,24 +148,29 @@ mod tests {
 
         let temp = tempdir().unwrap();
 
-        let mut table:CalicoTable = CalicoTable::from_local(temp.path()).await.unwrap();
+        let registry = ObjectStoreRegistry::new();
+        let object_store:Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(temp.path()).unwrap());
+        registry.register_store("file", "temp", object_store.clone());
+        let object_store_url = ObjectStoreUrl::parse("file://temp").unwrap();
+        let mut table_store:TableStore = TableStore::new(object_store_url, object_store).await.unwrap();
 
-        table.add_column_group(protocol::ColumnGroupMetadata { 
+        table_store.add_column_group(protocol::ColumnGroupMetadata { 
             column_group: COLGROUP_1.to_string(),
             partition_spec: Some(protocol::column_group_metadata::PartitionSpec::KeyHash(
                 protocol::KeyHashPartition { num_keys: 0, num_partitions: 2 })
             )}).await.unwrap();
 
-        table.add_column_group(protocol::ColumnGroupMetadata { 
+        table_store.add_column_group(protocol::ColumnGroupMetadata { 
             column_group: COLGROUP_2.to_string(),
             partition_spec: Some(protocol::column_group_metadata::PartitionSpec::KeyHash(
                 protocol::KeyHashPartition { num_keys: 0, num_partitions: 1 })
             )}).await.unwrap();
 
-        table.add_column(protocol::ColumnMetadata { column: FIELD_A.to_string(), column_group: COLGROUP_1.to_string() }).await.unwrap();
-        table.add_column(protocol::ColumnMetadata { column: FIELD_B.to_string(), column_group: COLGROUP_1.to_string() }).await.unwrap();
-        table.add_column(protocol::ColumnMetadata { column: FIELD_C.to_string(), column_group: COLGROUP_2.to_string() }).await.unwrap();
-        table.add_column(protocol::ColumnMetadata { column: FIELD_D.to_string(), column_group: COLGROUP_2.to_string() }).await.unwrap();
+        table_store.add_column(protocol::ColumnMetadata { column: FIELD_A.to_string(), column_group: COLGROUP_1.to_string() }).await.unwrap();
+        table_store.add_column(protocol::ColumnMetadata { column: FIELD_A.to_string(), column_group: COLGROUP_1.to_string() }).await.unwrap();
+        table_store.add_column(protocol::ColumnMetadata { column: FIELD_B.to_string(), column_group: COLGROUP_1.to_string() }).await.unwrap();
+        table_store.add_column(protocol::ColumnMetadata { column: FIELD_C.to_string(), column_group: COLGROUP_2.to_string() }).await.unwrap();
+        table_store.add_column(protocol::ColumnMetadata { column: FIELD_D.to_string(), column_group: COLGROUP_2.to_string() }).await.unwrap();
 
         let batch = RecordBatch::try_from_iter([
             (ID_FIELD, Arc::new(BinaryArray::from_vec(vec![b"bird", b"bird\0one", b"bird\0two", b"cat", b"cat\0one", b"cat\0two"])) as _),
@@ -200,7 +180,7 @@ mod tests {
             (FIELD_D,  Arc::new(Float32Array::from_iter([1., 1.1, 1.2, 2., 2.1, 2.2])) as _)
         ]).unwrap();
 
-        let splits = split_batch(&table, &batch).await.unwrap();
+        let splits = split_batch(&table_store, &batch).await.unwrap();
 
         assert_eq!(splits.len(), 3);
         assert_eq!(splits[0].0.partition_num, 0);
