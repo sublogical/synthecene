@@ -56,9 +56,9 @@ UPDATE
 ## TODO List
 * Immediate
   * Move all Files in a commit to a single transaction
-  * Include tile in commits & checkpoints
-  * TableView should be on a column-group
-  * Implement Commit|Checkpoint to Table (Vec<Vec<PartitionedFile>>)
+  * ~~Include tile in commits & checkpoints~~
+  * ~~Implement Commit|Checkpoint to Table (Vec<Vec<PartitionedFile>>)~~
+  * Make ID column explicit part of column-group definition
   * Move partitioning to use discrete values of a set of partition columns
 * CLI
   * Create Table
@@ -78,21 +78,40 @@ UPDATE
     * to CSV
     * to JSON
     * to parquet
-* Importers
-  * Common Crawl
-  * Wikidata
-* Operations
-  * ~~Basic Write~~
-  * Read/dDump
-  * Checkpoint
+* Reader API
+  * Support reading a dataset from multiple partitions
+  * Support reading a dataset from multiple commits
+  * Support reading a dataset from checkpoint
+  * Support reading a dataset from multiple column-groups
+  * Support time-travel reads
+  * Support direct reader for Python
+  * Support direct reader for Java/Scala
+  * Support disaggregated reads from Rust (Ballista?)
+  * Support disaggregated reads from Spark
+  * Support disaggregated reads from Flink
+  * Support denormalized reads
+  * ~~Integrate with DataFusion for reads~~
+  * ~~Support reading a dataset from single partition, commit & column-group~~
+  * ~~Support direct reader for Rust~~
+* Operator API
+  * ~~Direct Write from Rust~~
+  * Direct Checkpoint
   * Garbage Collect Data
     * Unreferenced Data Objects
     * Old Tmp Objects
     * Pre-Checkpoint Commits
     * Aged-Out Checkpoints
+  * Disaggregated Write from Rust
+  * Disaggregated Write from Spark
+  * Disaggregated Write from Flink
+  * Disaggregated Write from Beam
+  * Disaggregated Checkpoint from Rust
   * Write with Operator
-  * Squash
-* Transactions
+  * Direct Squash from Rust
+  * Disaggregated Squash from Rust
+* Transaction Log
+  * ~~Support ReferencePoint~~
+  * Support ReferencePoint Parser
   * Support squash + rebase to combine lots of small updates to a single update
   * Support vaccuum / garbage collection on pre-checkpoint commits
   * Support vaccuum / garbage collection on unreferenced objects
@@ -125,7 +144,10 @@ UPDATE
   * Support writes from Flink
   * Support writes from Spark
 * Tile-Stats
-  * Support automatica tile-level statistical aggregations, defined in SQL
+  * Support Datafusion Stats
+  * Support HLL sketches
+  * Support KLL sketches
+  * Support automatic tile-level statistical aggregations, defined in SQL
   * Support optimization of analytical SQL queries using tile-stats
 * Streaming Writes
   * Support streaming partitioning
@@ -134,24 +156,10 @@ UPDATE
   * Support streaming writes via kafka topic
   * Preserve kafka commits while in-flight
   * Support in-memory queries on uncommitted transactions
-* Readers
-  * Integrate with DataFusion for reads
-  * Support reading a tile from Checkpoint + Vec<Update>
-  * Support reading a dataset from multiple partitions
-  * Support reading a dataset from multiple column-groups
-  * Support direct reader for Rust
-  * Support direct reader for Python
-  * Support direct reader for Java/Scala
-  * Support distributed reads from Spark
-  * Support distributed reads from Flink
-  * Support time-travel reads
-  * Support denormalized reads
 * Indexing
   * Support inverted index reads on text columns
   * Support structured indexes
-* Stats
-  * Support HLL sketches
- 
+  
  
   
 

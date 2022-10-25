@@ -337,56 +337,123 @@ mod tests {
     use arrow::record_batch::RecordBatch;
     use datafusion::from_slice::FromSlice;
     use datafusion::prelude::SessionContext;
+    use std::future::Future;
     use tempfile::tempdir;
     use crate::log::ReferencePoint;
     use crate::operations::append_operation;
     use crate::table::{ID_FIELD, Table};
     use crate::test_util::*;
 
-    #[tokio::test]
-    async fn test_trivial_query() {
+    use super::TableStore;
 
+    fn make_expected(num: i64, min:f32, max:f32) -> RecordBatch{
+        RecordBatch::try_new(
+            Arc::new(Schema::new(vec![
+                Field::new("a", DataType::Int64, true),
+                Field::new("b", DataType::Float32, true),
+                Field::new("c", DataType::Float32, true),
+            ])),
+            vec![
+                Arc::new(Int64Array::from_slice(&[num])),
+                Arc::new(Float32Array::from_slice(&[min])),
+                Arc::new(Float32Array::from_slice(&[max])),
+            ],
+        ).unwrap()
+    }
+
+    async fn test_runner<F, Fut>(col_groups: &Vec<&str>, fields: &Vec<&str>, lambda: F) -> Vec<RecordBatch> 
+    where
+        F: FnOnce(Arc<TableStore>) -> Fut,
+        Fut: Future<Output = ()>
+    {
         let temp = tempdir().unwrap();
         let ctx = provision_ctx(temp.path());
 
-        let col_groups = vec![COLGROUP_UNPARTITIONED];
-        let table_store = provision_store(&ctx, &col_groups).await;
+        let table_store = Arc::new(provision_store(&ctx, &col_groups).await);
 
-        append_operation(&table_store, &make_data(10,0, &col_groups)).await.unwrap();
+        lambda(table_store.clone()).await;
 
         let reference = ReferencePoint::Mainline;
+        let table_schema = make_schema(&fields);
+        
+        let table = Table::define(table_store, table_schema, reference).unwrap();    
+        ctx.register_table("test", table);
 
-        let table_schema = Arc::new(Schema::new(vec![
-            Field::new(ID_FIELD, DataType::Int64, false),
-            Field::new(FIELD_C, DataType::Float32, false),
-            Field::new(FIELD_D, DataType::Float32, false),
-        ]));
-        let table = Table::define(Arc::new(table_store), table_schema, reference).unwrap();    
-
-        let table = ctx.register_table("test", table);
-
-        let sql = format!("SELECT count(*), min({}), max({}) from test", FIELD_C, FIELD_D);
-
-        let df = ctx
-            .sql(sql.as_str())
-            .await
-            .unwrap();
-
-        let expected = RecordBatch::try_new(
-            Arc::new(Schema::new(vec![
-                Field::new("COUNT(UInt8(1))", DataType::Int64, true),
-                Field::new("MIN(test.c)", DataType::Float32, true),
-                Field::new("MAX(test.d)", DataType::Float32, true),
-            ])),
-            vec![
-                Arc::new(Int64Array::from_slice(&[10])),
-                Arc::new(Float32Array::from_slice(&[0.0])),
-                Arc::new(Float32Array::from_slice(&[11.7])),
-            ],
-        ).unwrap();
+        let sql = format!("SELECT count(*) as A, min({}) as B, max({}) as C from test", fields[0], fields[1]);
+        let df = ctx.sql(sql.as_str()).await.unwrap();
+        
         let actual: Vec<RecordBatch> = df.collect().await.unwrap();
         assert_eq!(actual.len(),1);
-        assert_eq!(format!("{:?}", actual[0]), format!("{:?}", expected));
 
+        actual
     }
+    #[tokio::test]
+    async fn test_trivial_query() {
+        let col_groups = vec![COLGROUP_UNPARTITIONED];
+        let columns = vec![FIELD_C, FIELD_D];
+
+        let actual = test_runner(&col_groups.clone(), &columns, |table_store| async move {
+            append_operation(&table_store, &make_data(10,0, &col_groups)).await.unwrap();
+        }).await;
+
+        let expected = make_expected(10,0.0,11.7);
+        assert_eq!(format!("{:?}", actual[0]), format!("{:?}", expected));
+    }
+
+    #[tokio::test]
+    async fn test_partitioned_single_commit() {
+        let col_groups = vec![COLGROUP_PARTITIONED];
+        let columns = vec![FIELD_A, FIELD_B];
+
+        let actual = test_runner(&col_groups.clone(), &columns, |table_store| async move {
+            append_operation(&table_store, &make_data(10,0, &col_groups)).await.unwrap();
+        }).await;
+
+        let expected = make_expected(10,0.0,11.7);
+        assert_eq!(format!("{:?}", actual[0]), format!("{:?}", expected));
+    }
+
+    #[tokio::test]
+    async fn test_multiple_column_groups() {
+        let col_groups = vec![COLGROUP_PARTITIONED, COLGROUP_UNPARTITIONED];
+        let columns = vec![FIELD_A, FIELD_B, FIELD_C, FIELD_D];
+
+        let actual = test_runner(&col_groups.clone(), &columns, |table_store| async move {
+            append_operation(&table_store, &make_data(10,0, &col_groups)).await.unwrap();
+        }).await;
+
+        let expected = make_expected(10,0.0,11.7);
+        assert_eq!(format!("{:?}", actual[0]), format!("{:?}", expected));
+    }
+
+    #[tokio::test]
+    async fn test_non_overlapping_unpartitioned_commits() {
+        let col_groups = vec![COLGROUP_UNPARTITIONED];
+        let columns = vec![FIELD_C, FIELD_D];
+
+        let actual = test_runner(&col_groups.clone(), &columns, |table_store| async move {
+            append_operation(&table_store, &make_data(10,0, &col_groups)).await.unwrap();
+            append_operation(&table_store, &make_data(10,10, &col_groups)).await.unwrap();
+            append_operation(&table_store, &make_data(10,20, &col_groups)).await.unwrap();
+        }).await;
+
+        let expected = make_expected(10,0.0,11.7);
+        assert_eq!(format!("{:?}", actual[0]), format!("{:?}", expected));
+    }
+
+    #[tokio::test]
+    async fn test_overlapping_unpartitioned_commits() {
+        let col_groups = vec![COLGROUP_UNPARTITIONED];
+        let columns = vec![FIELD_C, FIELD_D];
+
+        let actual = test_runner(&col_groups.clone(), &columns, |table_store| async move {
+            append_operation(&table_store, &make_data(10,0, &col_groups)).await.unwrap();
+            append_operation(&table_store, &make_data(10,0, &col_groups)).await.unwrap();
+            append_operation(&table_store, &make_data(10,0, &col_groups)).await.unwrap();
+        }).await;
+
+        let expected = make_expected(10,0.0,11.7);
+        assert_eq!(format!("{:?}", actual[0]), format!("{:?}", expected));
+    }
+
 }

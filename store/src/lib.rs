@@ -99,7 +99,7 @@ pub mod result {
 pub mod test_util {
     use std::sync::Arc;
 
-    use arrow::{record_batch::RecordBatch, array::{BinaryArray, Float32Array, Array}};
+    use arrow::{record_batch::RecordBatch, array::{BinaryArray, Float32Array, Array}, datatypes::{Schema, DataType, Field}};
     use datafusion::{datasource::object_store::{ObjectStoreRegistry, ObjectStoreUrl}, prelude::SessionContext};
     use object_store::{local::LocalFileSystem, ObjectStore};
     use itertools::concat;
@@ -112,6 +112,7 @@ pub mod test_util {
     pub const FIELD_D:&str = "d";
 
     pub const COLGROUP_1:&str = "cg1";
+    pub const COLGROUP_PARTITIONED:&str = COLGROUP_1;
     pub const COLGROUP_2:&str = "cg2";
     pub const COLGROUP_UNPARTITIONED:&str = COLGROUP_2;
 
@@ -154,6 +155,15 @@ pub mod test_util {
         }
 
         table_store
+    }
+
+    pub fn make_schema(columns: &Vec<&str>) -> Arc<Schema> {
+        let mut fields = vec![ Field::new(ID_FIELD, DataType::Int64, false) ];
+        let mut additional = columns.iter().map(|name| Field::new(name, DataType::Float32, false)).collect::<Vec<Field>>();
+
+        fields.append(&mut additional);
+
+        Arc::new(Schema::new(fields))
     }
 
     pub fn make_data(num_records: u64, start_id: u64, column_groups: &Vec<&str>) -> RecordBatch {

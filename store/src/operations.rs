@@ -18,34 +18,38 @@ pub async fn append_operation(table_store: &TableStore,
     let col_expr = vec![("a".to_string(), "$new".to_string())];
     let mut commits = vec![];
 
-    // todo: compress tile operations with the same transaction log into a single transaction
+    let log = table_store.default_transaction_log().await?;
+    let head_id = log.head_id_mainline().await?;
+
+    // todo: proper timestamp
+    let timestamp = 0;
+
+    let mut all_tile_files = vec![];
 
     for (tile, file) in object_paths {
-        let log = table_store.transaction_log_for(&tile).await?;
-        let head_id = log.head_id_mainline().await?;
         
-        // todo: proper timestamp
-        let timestamp = 0;
-
         let tile_files = protocol::TileFiles {
             tile: Some(tile),
             file: vec![file]
         };
 
-        let commit = log.create_commit(
-            &head_id.to_vec(), 
-            None, 
-            None, 
-            None, 
-            timestamp, 
-            cols.to_vec(), 
-            col_expr.to_vec(), 
-            vec![tile_files]).await?;
-    
-        let _new_head = log.fast_forward(MAINLINE, &commit.commit_id).await.unwrap();
-
-        commits.push(commit.commit);
+        all_tile_files.push(tile_files);
     }
+
+    let commit = log.create_commit(
+        &head_id.to_vec(), 
+        None, 
+        None, 
+        None, 
+        timestamp, 
+        cols.to_vec(), 
+        col_expr.to_vec(), 
+        all_tile_files).await?;
+
+    let _new_head = log.fast_forward(MAINLINE, &commit.commit_id).await.unwrap();
+
+    commits.push(commit.commit);
+
 
     Ok(commits)
 }
