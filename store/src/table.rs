@@ -228,13 +228,22 @@ impl TableStore {
 
         Ok(output)
     }
-
 }
 
 impl Table {
     // Use Table configuration to determine the map of column groups to columns for the table
     pub async fn extract_column_groups(&self) -> CalicoResult<Vec<(String, Vec<usize>)>> {
         self.store.extract_column_groups(self.schema.clone()).await
+    }
+
+    pub fn define(store: Arc<TableStore>,
+                  schema: Arc<Schema>,
+                  reference: ReferencePoint) -> CalicoResult<Arc<dyn TableProvider>> {
+        Ok(Arc::new(Table {
+            store,
+            schema,
+            reference
+        }))
     }
 
 }
@@ -310,10 +319,74 @@ impl TableProvider for Table {
     }
 
     fn get_table_definition(&self) -> Option< &str>{
-  None
-}
+        None
+    }
 
     fn supports_filter_pushdown(&self,_filter: &datafusion::prelude::Expr,) -> datafusion::error::Result<datafusion::logical_expr::TableProviderFilterPushDown>{
-  Ok(datafusion::logical_expr::TableProviderFilterPushDown::Unsupported)
+      Ok(datafusion::logical_expr::TableProviderFilterPushDown::Unsupported)
+    }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use arrow::array::{Int64Array, Float32Array};
+    use arrow::datatypes::{DataType, Schema, Field};
+    use arrow::record_batch::RecordBatch;
+    use datafusion::from_slice::FromSlice;
+    use datafusion::prelude::SessionContext;
+    use tempfile::tempdir;
+    use crate::log::ReferencePoint;
+    use crate::operations::append_operation;
+    use crate::table::{ID_FIELD, Table};
+    use crate::test_util::*;
+
+    #[tokio::test]
+    async fn test_trivial_query() {
+
+        let temp = tempdir().unwrap();
+        let ctx = provision_ctx(temp.path());
+
+        let col_groups = vec![COLGROUP_UNPARTITIONED];
+        let table_store = provision_store(&ctx, &col_groups).await;
+
+        append_operation(&table_store, &make_data(10,0, &col_groups)).await.unwrap();
+
+        let reference = ReferencePoint::Mainline;
+
+        let table_schema = Arc::new(Schema::new(vec![
+            Field::new(ID_FIELD, DataType::Int64, false),
+            Field::new(FIELD_C, DataType::Float32, false),
+            Field::new(FIELD_D, DataType::Float32, false),
+        ]));
+        let table = Table::define(Arc::new(table_store), table_schema, reference).unwrap();    
+
+        let table = ctx.register_table("test", table);
+
+        let sql = format!("SELECT count(*), min({}), max({}) from test", FIELD_C, FIELD_D);
+
+        let df = ctx
+            .sql(sql.as_str())
+            .await
+            .unwrap();
+
+        let expected = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![
+                Field::new("COUNT(UInt8(1))", DataType::Int64, true),
+                Field::new("MIN(test.c)", DataType::Float32, true),
+                Field::new("MAX(test.d)", DataType::Float32, true),
+            ])),
+            vec![
+                Arc::new(Int64Array::from_slice(&[10])),
+                Arc::new(Float32Array::from_slice(&[0.0])),
+                Arc::new(Float32Array::from_slice(&[11.7])),
+            ],
+        ).unwrap();
+        let actual: Vec<RecordBatch> = df.collect().await.unwrap();
+        assert_eq!(actual.len(),1);
+        assert_eq!(format!("{:?}", actual[0]), format!("{:?}", expected));
+
+    }
 }

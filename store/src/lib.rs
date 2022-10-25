@@ -100,7 +100,7 @@ pub mod test_util {
     use std::sync::Arc;
 
     use arrow::{record_batch::RecordBatch, array::{BinaryArray, Float32Array, Array}};
-    use datafusion::datasource::object_store::{ObjectStoreRegistry, ObjectStoreUrl};
+    use datafusion::{datasource::object_store::{ObjectStoreRegistry, ObjectStoreUrl}, prelude::SessionContext};
     use object_store::{local::LocalFileSystem, ObjectStore};
     use itertools::concat;
 
@@ -113,12 +113,22 @@ pub mod test_util {
 
     pub const COLGROUP_1:&str = "cg1";
     pub const COLGROUP_2:&str = "cg2";
+    pub const COLGROUP_UNPARTITIONED:&str = COLGROUP_2;
 
-    pub async fn provision_table(path: &std::path::Path, column_groups: &Vec<&str>) -> TableStore {
-        let registry = ObjectStoreRegistry::new();
+    pub fn provision_ctx(path: &std::path::Path) -> SessionContext {
+        let ctx = SessionContext::new();
         let object_store:Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(path).unwrap());
-        registry.register_store("file", "temp", object_store.clone());
+
+        ctx.state
+            .try_write().unwrap().runtime_env.register_object_store("file", "temp", object_store);
+            
+        
+        ctx
+    }
+
+    pub async fn provision_store(ctx: &SessionContext, column_groups: &Vec<&str>) -> TableStore {
         let object_store_url = ObjectStoreUrl::parse("file://temp").unwrap();
+        let object_store = ctx.state.read().runtime_env.object_store(&object_store_url).unwrap();
         let mut table_store:TableStore = TableStore::new(object_store_url, object_store).await.unwrap();
 
         if column_groups.contains(&COLGROUP_1) {
@@ -163,7 +173,7 @@ pub mod test_util {
             cols.append(&mut vec![ (FIELD_A, val.clone()), (FIELD_B, val.clone()) ]);
         }
 
-        if column_groups.contains(&COLGROUP_1) {
+        if column_groups.contains(&COLGROUP_2) {
             cols.append(&mut vec![ (FIELD_C, val.clone()), (FIELD_D, val.clone()) ]);
         }
 

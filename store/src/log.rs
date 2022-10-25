@@ -16,6 +16,7 @@ type BranchRef<'a> = &'a str;
 pub const MAINLINE: &str = "mainline";
 
 
+#[derive(Debug)]
 pub enum TableAction {
     Checkpoint(protocol::Checkpoint),
     Commit(protocol::Commit)

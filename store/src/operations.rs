@@ -243,6 +243,7 @@ pub async fn read_operation(table: &CalicoTable,
 
 #[cfg(test)]
 mod tests {
+    use datafusion::prelude::SessionContext;
     use tempfile::tempdir;
     use crate::operations::append_operation;
     use crate::test_util::*;
@@ -250,14 +251,16 @@ mod tests {
     #[tokio::test]
     async fn test_append() {
         let temp = tempdir().unwrap();
-        let cols = vec![COLGROUP_1, COLGROUP_2];
-        let table = provision_table(temp.path(), &cols).await;
+        let ctx = provision_ctx(temp.path());
 
-        append_operation(&table, &make_data(10,0, &cols)).await.unwrap();
-        append_operation(&table, &make_data(10,10, &cols)).await.unwrap();
-        append_operation(&table, &make_data(10, 20, &cols)).await.unwrap();
+        let col_groups = vec![COLGROUP_1, COLGROUP_2];
+        let table_store = provision_store(&ctx, &col_groups).await;
+
+        append_operation(&table_store, &make_data(10,0, &col_groups)).await.unwrap();
+        append_operation(&table_store, &make_data(10,10, &col_groups)).await.unwrap();
+        append_operation(&table_store, &make_data(10, 20, &col_groups)).await.unwrap();
         
-        let log = table.default_transaction_log().await.unwrap();
+        let log = table_store.default_transaction_log().await.unwrap();
         let head = log.head_mainline().await.unwrap();
         let history = head.history(100).await.unwrap();
         assert_eq!(history.len(), 9);
