@@ -1,11 +1,7 @@
-use std::sync::Arc;
-
-use arrow::record_batch::RecordBatch;
-use futures::{future, Future};
 use object_store::path::Path as ObjectStorePath;
 use rand::Rng;
 
-use crate::{result::{CalicoResult, CalicoError}, protocol};
+use crate::{result::{CalicoResult}, protocol};
 
 
 const OBJECT_PATH: &'static str = "objects";
@@ -14,7 +10,8 @@ const OBJECT_PATH: &'static str = "objects";
 
 pub fn object_path_for<'a>(tile: &protocol::Tile) ->  CalicoResult<ObjectStorePath> {
     let object_id = rand::thread_rng().gen::<[u8; 20]>().to_vec();
+    let partition = tile.partition_num;
     let hexencode = hex::encode(&object_id);
-    let path: ObjectStorePath = format!("{}/{}",OBJECT_PATH, hexencode).try_into().unwrap();
+    let path: ObjectStorePath = format!("{}/{:08}/{}",OBJECT_PATH, partition, hexencode).try_into().unwrap();
     Ok(path)
 }

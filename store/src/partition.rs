@@ -1,11 +1,9 @@
 use arrow::array::{BinaryArray, ArrayRef, UInt64Array};
 use arrow::compute::take;
-use arrow::datatypes::{Schema, SchemaRef};
+use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
 use arrow::error::Result as ArrowResult;
 use datafusion::physical_plan::SendableRecordBatchStream;
-use futures::Stream;
-use itertools::Itertools;
 use log::info;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
@@ -14,7 +12,7 @@ use std::sync::Arc;
 
 use crate::result::{CalicoResult, CalicoError};
 use crate::protocol;
-use crate::table::{Table, TableStore, ID_INDEX};
+use crate::table::{TableStore, ID_INDEX};
 
 // Maps the ID column from a record batch into an columns of partition indices for all records
 fn calc_partitions(column_group_config: &protocol::ColumnGroupMetadata, batch: &RecordBatch) -> CalicoResult<UInt64Array> {
@@ -130,7 +128,7 @@ fn _split_stream(_table_store: &TableStore,
 #[cfg(test)]
 mod tests {
     use arrow::array::{ Float32Array, BinaryArray };
-    use datafusion::{execution::runtime_env::RuntimeEnv, datasource::object_store::{ObjectStoreRegistry, ObjectStoreUrl}};
+    use datafusion::{datasource::object_store::{ObjectStoreRegistry, ObjectStoreUrl}};
     use object_store::{ObjectStore, local::LocalFileSystem};
     use tempfile::tempdir;
     

@@ -2,11 +2,11 @@
 use arrow::record_batch::RecordBatch;
 
 use crate::log::MAINLINE;
-use crate::table::{Table, TableStore};
-use crate::{protocol, partition};
+use crate::table::TableStore;
+use crate::protocol;
 use crate::writer::write_batches;
-use crate::partition::{ split_batch };
-use crate::result::{CalicoResult};
+use crate::partition::split_batch;
+use crate::result::CalicoResult;
 
 pub async fn append_operation(table_store: &TableStore, 
                               batch:&RecordBatch) -> CalicoResult<Vec<protocol::Commit>> { 

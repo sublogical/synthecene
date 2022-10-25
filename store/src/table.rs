@@ -13,11 +13,10 @@ use datafusion::prelude::Expr;
 use datafusion::scalar::ScalarValue;
 use std::collections::HashMap;
 use std::sync::Arc;
-use arrow::datatypes::{SchemaRef as ArrowSchemaRef, Schema as ArrowSchema, Field as ArrowField};
+use arrow::datatypes::{SchemaRef as ArrowSchemaRef, Schema as ArrowSchema};
 use datafusion::datasource::TableProvider;
 use itertools::Itertools;
 use object_store::{ObjectStore, ObjectMeta};
-use object_store::local::LocalFileSystem;
 use object_store::path::Path as ObjectStorePath;
 
 use crate::log::{TransactionLog, ReferencePoint, TableAction};
@@ -89,7 +88,7 @@ fn make_table_for_action(action:&TableAction, column_group:&str) -> Vec<Vec<Part
         .filter_map(|tile_file|{
             let tile = tile_file.tile.as_ref().expect("Should never have a tile_file with no tile");
             
-            if (tile.column_group != column_group) {
+            if tile.column_group != column_group {
                 None
             } else {
                 let partition_num = tile.partition_num;
@@ -104,7 +103,7 @@ fn make_table_for_action(action:&TableAction, column_group:&str) -> Vec<Vec<Part
         .collect::<Vec<Vec<PartitionedFile>>>()
 }
 
-fn make_stats_for_action(action:&TableAction, column_group:&str) -> Statistics  {
+fn make_stats_for_action(_action:&TableAction, _column_group:&str) -> Statistics  {
     // todo: read stats from the transaction log?
     Statistics::default()
 }
@@ -119,7 +118,7 @@ async fn make_schema_for_action(object_store:&Arc<dyn ObjectStore>, action:&Tabl
         .filter_map(|tile_file|{
             let tile = tile_file.tile.as_ref().expect("Should never have a tile_file with no tile");
             
-            if (tile.column_group != column_group) {
+            if tile.column_group != column_group {
                 None
             } else {
                 Some(tile_file.file[0].clone())
@@ -263,7 +262,7 @@ impl TableProvider for Table {
 
     async fn scan(
         &self,
-        session: &SessionState,
+        _session: &SessionState,
         projection: &Option<Vec<usize>>,
         filters: &[Expr],
         limit: Option<usize>,
