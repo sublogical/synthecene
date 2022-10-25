@@ -1,0 +1,11 @@
+[workspace]
+
+members = [
+    "acquisition",
+    "annotate",
+    "index",
+    "model",
+    "signal",
+    "sim",
+    "store",
+]

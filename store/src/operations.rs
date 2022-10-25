@@ -243,86 +243,24 @@ pub async fn read_operation(table: &CalicoTable,
 
 #[cfg(test)]
 mod tests {
-    use core::num;
-    use std::sync::Arc;
-
-    use arrow::{array::{ Float32Array, BinaryArray, Array }, record_batch::RecordBatch};
-    use datafusion::{prelude::SessionConfig, datasource::object_store::{ObjectStoreRegistry, ObjectStoreUrl}};
-    use object_store::{ObjectStore, local::LocalFileSystem};
     use tempfile::tempdir;
-    
-    use crate::{protocol, operations::append_operation, table::{TableStore, ID_FIELD}};
-
-    const FIELD_A:&str = "a";
-    const FIELD_B:&str = "b";
-    const FIELD_C:&str = "c";
-    const FIELD_D:&str = "d";
-
-    const COLGROUP_1:&str = "cg1";
-    const COLGROUP_2:&str = "cg2";
+    use crate::operations::append_operation;
+    use crate::test_util::*;
 
     #[tokio::test]
     async fn test_append() {
         let temp = tempdir().unwrap();
-        let table = provision_table(temp.path()).await;
+        let cols = vec![COLGROUP_1, COLGROUP_2];
+        let table = provision_table(temp.path(), &cols).await;
 
-        append_operation(&table, &make_data(10,0)).await.unwrap();
-        append_operation(&table, &make_data(10,10)).await.unwrap();
-        append_operation(&table, &make_data(10, 20)).await.unwrap();
+        append_operation(&table, &make_data(10,0, &cols)).await.unwrap();
+        append_operation(&table, &make_data(10,10, &cols)).await.unwrap();
+        append_operation(&table, &make_data(10, 20, &cols)).await.unwrap();
         
         let log = table.default_transaction_log().await.unwrap();
         let head = log.head_mainline().await.unwrap();
         let history = head.history(100).await.unwrap();
         assert_eq!(history.len(), 9);
-
         // make sure the files are in the object store
     }
-
-    fn make_data(num_records: u64, start_id: u64) -> RecordBatch {
-        let id_col = (0..num_records).into_iter()
-            .map(|idx| Some(format!("{:08}", idx+start_id).as_bytes().to_owned()))
-            .collect::<Vec<_>>();
-        let id = Arc::new(BinaryArray::from_iter(id_col)) as _;
-
-        let val_col = (0..num_records).into_iter()
-            .map(|idx| 1.3 * idx as f32)
-            .collect::<Vec<f32>>();
-        let val:Arc<dyn Array> = Arc::new(Float32Array::from_iter(val_col)) as _;
-
-        RecordBatch::try_from_iter([
-            (ID_FIELD, id),
-            (FIELD_A, val.clone()),
-            (FIELD_B, val.clone()),
-            (FIELD_C, val.clone()),
-            (FIELD_D, val.clone())
-        ]).unwrap()
-    }
-
-    async fn provision_table(path: &std::path::Path) -> TableStore {
-        let registry = ObjectStoreRegistry::new();
-        let object_store:Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(path).unwrap());
-        registry.register_store("file", "temp", object_store.clone());
-        let object_store_url = ObjectStoreUrl::parse("file://temp").unwrap();
-        let mut table_store:TableStore = TableStore::new(object_store_url, object_store).await.unwrap();
-
-        table_store.add_column_group(protocol::ColumnGroupMetadata { 
-            column_group: COLGROUP_1.to_string(),
-            partition_spec: Some(protocol::column_group_metadata::PartitionSpec::KeyHash(
-                protocol::KeyHashPartition { num_keys: 0, num_partitions: 2 })
-            )}).await.unwrap();
-
-        table_store.add_column_group(protocol::ColumnGroupMetadata { 
-            column_group: COLGROUP_2.to_string(),
-            partition_spec: Some(protocol::column_group_metadata::PartitionSpec::KeyHash(
-                protocol::KeyHashPartition { num_keys: 0, num_partitions: 1 })
-            )}).await.unwrap();
-
-        table_store.add_column(protocol::ColumnMetadata { column: FIELD_A.to_string(), column_group: COLGROUP_1.to_string() }).await.unwrap();
-        table_store.add_column(protocol::ColumnMetadata { column: FIELD_B.to_string(), column_group: COLGROUP_1.to_string() }).await.unwrap();
-        table_store.add_column(protocol::ColumnMetadata { column: FIELD_C.to_string(), column_group: COLGROUP_2.to_string() }).await.unwrap();
-        table_store.add_column(protocol::ColumnMetadata { column: FIELD_D.to_string(), column_group: COLGROUP_2.to_string() }).await.unwrap();
-
-        table_store
-    }
-
 }
