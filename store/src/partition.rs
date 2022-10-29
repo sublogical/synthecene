@@ -1,4 +1,4 @@
-use arrow::array::{BinaryArray, ArrayRef, UInt64Array};
+use arrow::array::{ArrayRef, UInt64Array, Int32Array};
 use arrow::compute::take;
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
@@ -6,20 +6,18 @@ use arrow::error::Result as ArrowResult;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use log::info;
 use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use crate::result::{CalicoResult, CalicoError};
 use crate::protocol;
-use crate::table::{TableStore, ID_INDEX};
+use crate::table::TableStore;
 
 // Maps the ID column from a record batch into an columns of partition indices for all records
-fn calc_partitions(column_group_config: &protocol::ColumnGroupMetadata, batch: &RecordBatch) -> CalicoResult<UInt64Array> {
-    let indices: UInt64Array = batch
+fn calc_partitions(column_group_config: &protocol::ColumnGroupMetadata, batch: &RecordBatch) -> CalicoResult<Int32Array> {
+    let indices: Int32Array = batch
         .column(0)
         .as_any()
-        .downcast_ref::<BinaryArray>()
+        .downcast_ref::<Int32Array>()
         .unwrap()
         .iter()
         .map(|value| value.map(|value| key_to_partition(column_group_config, value)))
@@ -31,12 +29,12 @@ fn calc_partitions(column_group_config: &protocol::ColumnGroupMetadata, batch: &
 // Maps the ID column from a record batch into a vector containing a vector of indices for each partition
 fn partition_indices(column_group_config: &protocol::ColumnGroupMetadata, batch: &RecordBatch) -> CalicoResult<Vec<(u64,UInt64Array)>> {
     let partitions = calc_partitions(column_group_config, batch)?;
-    let max_partition:u64 = arrow::compute::max(&partitions).ok_or(CalicoError::PartitionError("unexpected error computing max partition"))?;
+    let max_partition:i32 = arrow::compute::max(&partitions).ok_or(CalicoError::PartitionError("unexpected error computing max partition"))?;
     let partitions = partitions.values();
     
     let mut output:Vec<(u64, Vec<u64>)> = Vec::with_capacity((max_partition + 1) as usize);
     for partition_num in 0..=max_partition {
-        output.push((partition_num, Vec::new()));
+        output.push((partition_num.try_into().unwrap(), Vec::new()));
     }
 
     for (index, partition_num) in partitions.iter().enumerate() {
@@ -48,7 +46,7 @@ fn partition_indices(column_group_config: &protocol::ColumnGroupMetadata, batch:
         .collect())
 }
 
-fn key_to_partition(column_group_config: &protocol::ColumnGroupMetadata, key: &[u8]) -> u64 {
+fn key_to_partition(column_group_config: &protocol::ColumnGroupMetadata, key: i32) -> i32 {
     use protocol::column_group_metadata::PartitionSpec;
 
     match &column_group_config.partition_spec {
@@ -58,7 +56,9 @@ fn key_to_partition(column_group_config: &protocol::ColumnGroupMetadata, key: &[
 }
 
 // Calculates the partition ID for a record based on the key using hashing
-fn key_hash_partition(key_hash: &protocol::KeyHashPartition, key: &[u8]) -> u64 {
+fn key_hash_partition(key_hash: &protocol::KeyHashPartition, key: i32) -> i32 {
+    // todo: support more partition data types
+    /*
     let mut s = DefaultHasher::new();
     let mut index = 0;
     let mut matches = 0;
@@ -74,6 +74,8 @@ fn key_hash_partition(key_hash: &protocol::KeyHashPartition, key: &[u8]) -> u64 
     }
 
     return (s.finish() % key_hash.num_partitions as u64).try_into().unwrap();
+     */
+    key % key_hash.num_partitions as i32
 }
 
 pub async fn split_batch(table_store: &TableStore, batch: &RecordBatch) -> CalicoResult<Vec<(protocol::Tile, Arc<RecordBatch>)>> {
@@ -90,7 +92,7 @@ pub async fn split_batch(table_store: &TableStore, batch: &RecordBatch) -> Calic
             batch.schema().fields()
                 .iter()
                 .enumerate()
-                .filter(|(field_index, _)| *field_index == ID_INDEX || column_indices.contains(field_index))
+                .filter(|(field_index, _)| column_indices.contains(field_index))
                 .map(|(_, field)| field.to_owned())
                 .collect()));
             
@@ -101,7 +103,7 @@ pub async fn split_batch(table_store: &TableStore, batch: &RecordBatch) -> Calic
                     .columns()
                     .iter()
                     .enumerate()
-                    .filter(|(column_index, _)| *column_index == ID_INDEX || column_indices.contains(column_index))
+                    .filter(|(column_index, _)| column_indices.contains(column_index))
                     .map(|(_, column)| take(column.as_ref(), row_indices, None))
                     .collect::<ArrowResult<Vec<ArrayRef>>>()?
             )?);
@@ -132,7 +134,7 @@ mod tests {
     use object_store::{ObjectStore, local::LocalFileSystem};
     use tempfile::tempdir;
     
-    use crate::{partition::*, table::ID_FIELD};
+    use crate::{partition::*, test_util::{ID_FIELD, build_table_i32, build_table, int32_col}};
 
     #[tokio::test]
     async fn test_split_batch() {
@@ -154,14 +156,16 @@ mod tests {
 
         table_store.add_column_group(protocol::ColumnGroupMetadata { 
             column_group: COLGROUP_1.to_string(),
+            id_columns: vec![ID_FIELD.to_string()],
             partition_spec: Some(protocol::column_group_metadata::PartitionSpec::KeyHash(
-                protocol::KeyHashPartition { num_keys: 0, num_partitions: 2 })
+                protocol::KeyHashPartition { partition_keys: vec![ID_FIELD.to_string()], num_partitions: 1 })
             )}).await.unwrap();
 
         table_store.add_column_group(protocol::ColumnGroupMetadata { 
             column_group: COLGROUP_2.to_string(),
+            id_columns: vec![ID_FIELD.to_string()],
             partition_spec: Some(protocol::column_group_metadata::PartitionSpec::KeyHash(
-                protocol::KeyHashPartition { num_keys: 0, num_partitions: 1 })
+                protocol::KeyHashPartition { partition_keys: vec![ID_FIELD.to_string()], num_partitions: 2 })
             )}).await.unwrap();
 
         table_store.add_column(protocol::ColumnMetadata { column: FIELD_A.to_string(), column_group: COLGROUP_1.to_string() }).await.unwrap();
@@ -170,31 +174,56 @@ mod tests {
         table_store.add_column(protocol::ColumnMetadata { column: FIELD_C.to_string(), column_group: COLGROUP_2.to_string() }).await.unwrap();
         table_store.add_column(protocol::ColumnMetadata { column: FIELD_D.to_string(), column_group: COLGROUP_2.to_string() }).await.unwrap();
 
-        let batch = RecordBatch::try_from_iter([
-            (ID_FIELD, Arc::new(BinaryArray::from_vec(vec![b"bird", b"bird\0one", b"bird\0two", b"cat", b"cat\0one", b"cat\0two"])) as _),
-            (FIELD_A,  Arc::new(Float32Array::from_iter([1., 1.1, 1.2, 2., 2.1, 2.2])) as _),
-            (FIELD_B,  Arc::new(Float32Array::from_iter([1., 1.1, 1.2, 2., 2.1, 2.2])) as _),
-            (FIELD_C,  Arc::new(Float32Array::from_iter([1., 1.1, 1.2, 2., 2.1, 2.2])) as _),
-            (FIELD_D,  Arc::new(Float32Array::from_iter([1., 1.1, 1.2, 2., 2.1, 2.2])) as _)
-        ]).unwrap();
+        let batch = build_table(
+            &vec![
+                (ID_FIELD, int32_col(&vec![0, 1, 2, 3, 4, 5, 6, 7, 8])),
+                (FIELD_A, int32_col(&vec![11, 12, 13, 14, 15, 16, 17, 18, 19])),
+                (FIELD_B, int32_col(&vec![21, 22, 23, 24, 25, 26, 27, 28, 29])),
+                (FIELD_C, int32_col(&vec![21, 32, 33, 34, 35, 36, 37, 38, 39])),
+                (FIELD_D, int32_col(&vec![21, 42, 43, 44, 45, 46, 47, 48, 49])),
+            ]
+        );
 
         let splits = split_batch(&table_store, &batch).await.unwrap();
 
         assert_eq!(splits.len(), 3);
         assert_eq!(splits[0].0.partition_num, 0);
         assert_eq!(splits[0].0.column_group, COLGROUP_1);
-        assert_eq!(splits[0].1.num_rows(), 3);
+
+        // TODO: convert this to use assert_batches_sorted_eq
+        assert_eq!(splits[0].1.num_rows(), 9);
         assert_eq!(splits[0].1.num_columns(), 3);
 
-        assert_eq!(splits[1].0.partition_num, 1);
-        assert_eq!(splits[1].0.column_group, COLGROUP_1);
-        assert_eq!(splits[1].1.num_rows(), 3);
+        assert_eq!(splits[1].0.partition_num, 0);
+        assert_eq!(splits[1].0.column_group, COLGROUP_2);
+        assert_eq!(splits[1].1.num_rows(), 5);
         assert_eq!(splits[1].1.num_columns(), 3);
 
-        assert_eq!(splits[2].0.partition_num, 0);
+        assert_eq!(splits[2].0.partition_num, 1);
         assert_eq!(splits[2].0.column_group, COLGROUP_2);
-        assert_eq!(splits[2].1.num_rows(), 6);
+        assert_eq!(splits[2].1.num_rows(), 4);
         assert_eq!(splits[2].1.num_columns(), 3);
     }
+
+    #[tokio::test]
+    async fn hash_partition_numerics() {
+    }
+
+    #[tokio::test]
+    async fn hash_partition_datetime() {
+    }
+    
+    #[tokio::test]
+    async fn hash_partition_string() {
+    }
+
+    #[tokio::test]
+    async fn hash_partition_binary() {
+    }
+
+    #[tokio::test]
+    async fn hash_partition_protobuf() {
+    }
+
 
 }

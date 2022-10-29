@@ -48,6 +48,8 @@ impl TableView<'_> {
             }
         }
 
+        since_checkpoint.reverse();
+        
         // no checkpoint found, return what we have
         // todo: should we warn if we didn't hit end of history?
         return Ok(TableView {
@@ -193,9 +195,17 @@ impl From<protocol::Commit> for ReferencePoint {
 }
 
 impl ReferencePoint {
+    /*
+    // TODO: implement support for reference point parsing
+
+    // master@^                     One commit back HEAD on master
+    // master@{10}                   Ten commits back HEAD on master
+    // master@[20221026T220447Z]    Rewind master to a specific timestamp
+    
     fn parse(reference_str: &str) -> Self {
         todo!()
     }
+     */
 }
 
 #[derive(Clone, Debug)]

@@ -70,14 +70,16 @@ message Tile {
 }
 
 message KeyHashPartition {
-    uint32 num_keys = 1;
+    repeated string partition_keys = 1;
     uint64 num_partitions = 2;
 }
 
 message ColumnGroupMetadata {
     string column_group = 1;
+    repeated string id_columns = 2;
+
     oneof partition_spec {
-        KeyHashPartition key_hash = 2;
+        KeyHashPartition key_hash = 3;
     }
 }
 

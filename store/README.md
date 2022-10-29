@@ -54,12 +54,71 @@ UPDATE
 
 
 ## TODO List
-* Immediate
-  * Move all Files in a commit to a single transaction
-  * ~~Include tile in commits & checkpoints~~
-  * ~~Implement Commit|Checkpoint to Table (Vec<Vec<PartitionedFile>>)~~
-  * Make ID column explicit part of column-group definition
+* Reader API
+  * Support reading a dataset from checkpoint
+  * Support reading a dataset from multiple column-groups
+  * Support time-travel reads
+  * Support direct reader for Python
+  * Support direct reader for Java/Scala
+  * Support disaggregated reads from Rust (Ballista?)
+  * Support disaggregated reads from Spark
+  * Support disaggregated reads from Flink
+  * Support denormalized reads
+  * ~~Support reading a dataset from multiple commits~~
+  * ~~Support reading a dataset from multiple partitions~~
+  * ~~Integrate with DataFusion for reads~~
+  * ~~Support reading a dataset from single partition, commit & column-group~~
+  * ~~Support direct reader for Rust~~
+* DataFusion
+  * Add BinaryType to TryFrom<&DataType> for ScalarValue
+  * Add BinaryType to MergeSortJoin (line 1112)
+  * Implement statistics() for SortMergeJoinExec
+* Schema
+  * ~~Make ID column explicit part of column-group definition~~
+  * Support more int-based IDs
+  * Support string based IDs
+  * Support multiple IDs
+  * Sensible errors for ID failures
   * Move partitioning to use discrete values of a set of partition columns
+  * Read schema from transaction log
+* Operator API
+  * Move to Command Pattern
+  * DDL Operations
+  * Direct Checkpoint
+  * Garbage Collect Data
+    * Unreferenced Data Objects
+    * Old Tmp Objects
+    * Pre-Checkpoint Commits
+    * Aged-Out Checkpoints
+  * Disaggregated Write from Rust
+  * Disaggregated Write from Spark
+  * Disaggregated Write from Flink
+  * Disaggregated Write from Beam
+  * Disaggregated Checkpoint from Rust
+  * Write with Operator
+  * Direct Squash from Rust
+  * Disaggregated Squash from Rust
+  * ~~Direct Write from Rust~~
+* Transaction Log
+  * Support ReferencePoint Parser
+  * Support Column & ColumnGroup metadata in transaction log
+  * Support squash + rebase to combine lots of small updates to a single update
+  * Support vaccuum / garbage collection on pre-checkpoint commits
+  * Support vaccuum / garbage collection on unreferenced objects
+  * ~~Support ReferencePoint~~
+  * ~~Support transaction log tree~~
+  * ~~Support branch labels (e.g. mainline)~~
+  * ~~Support operations with set of parquet files + update expression~~
+  * ~~Support parallel checkpoint operations~~
+* Benchmark
+  * Transaction Log
+    * Commit Speed
+    * Lookup Speed
+  * Operations
+    * Append
+    * Checkpoint
+  * Data Generator
+  * Reader
 * CLI
   * Create Table
   * Add Column-Group
@@ -78,47 +137,6 @@ UPDATE
     * to CSV
     * to JSON
     * to parquet
-* Reader API
-  * Support reading a dataset from multiple partitions
-  * Support reading a dataset from multiple commits
-  * Support reading a dataset from checkpoint
-  * Support reading a dataset from multiple column-groups
-  * Support time-travel reads
-  * Support direct reader for Python
-  * Support direct reader for Java/Scala
-  * Support disaggregated reads from Rust (Ballista?)
-  * Support disaggregated reads from Spark
-  * Support disaggregated reads from Flink
-  * Support denormalized reads
-  * ~~Integrate with DataFusion for reads~~
-  * ~~Support reading a dataset from single partition, commit & column-group~~
-  * ~~Support direct reader for Rust~~
-* Operator API
-  * ~~Direct Write from Rust~~
-  * Direct Checkpoint
-  * Garbage Collect Data
-    * Unreferenced Data Objects
-    * Old Tmp Objects
-    * Pre-Checkpoint Commits
-    * Aged-Out Checkpoints
-  * Disaggregated Write from Rust
-  * Disaggregated Write from Spark
-  * Disaggregated Write from Flink
-  * Disaggregated Write from Beam
-  * Disaggregated Checkpoint from Rust
-  * Write with Operator
-  * Direct Squash from Rust
-  * Disaggregated Squash from Rust
-* Transaction Log
-  * ~~Support ReferencePoint~~
-  * Support ReferencePoint Parser
-  * Support squash + rebase to combine lots of small updates to a single update
-  * Support vaccuum / garbage collection on pre-checkpoint commits
-  * Support vaccuum / garbage collection on unreferenced objects
-  * ~~Support transaction log tree~~
-  * ~~Support branch labels (e.g. mainline)~~
-  * ~~Support operations with set of parquet files + update expression~~
-  * ~~Support parallel checkpoint operations~~
 * ObjectStore Interfaces
   * Support dynamo db storage
   * Support redis storage
@@ -160,6 +178,10 @@ UPDATE
   * Support inverted index reads on text columns
   * Support structured indexes
   
+* Immediate
+  * ~~Move all Files in a commit to a single transaction~~
+  * ~~Include tile in commits & checkpoints~~
+  * ~~Implement Commit|Checkpoint to Table (Vec<Vec<PartitionedFile>>)~~
  
   
 

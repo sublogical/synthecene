@@ -5,6 +5,7 @@ pub mod protocol {
 
 mod writer;
 
+pub mod datatypes;
 pub mod log;
 pub mod object;
 pub mod operations;
@@ -99,13 +100,17 @@ pub mod result {
 pub mod test_util {
     use std::sync::Arc;
 
-    use arrow::{record_batch::RecordBatch, array::{BinaryArray, Float32Array, Array}, datatypes::{Schema, DataType, Field}};
+    use arrow::{record_batch::RecordBatch, array::{BinaryArray, Float32Array, Array, Int64Array, UInt64Array, Int32Array, ArrayRef, StringArray}, datatypes::{Schema, DataType, Field}};
     use datafusion::{datasource::object_store::{ObjectStoreRegistry, ObjectStoreUrl}, prelude::SessionContext};
     use object_store::{local::LocalFileSystem, ObjectStore};
     use itertools::concat;
 
-    use crate::{table::{TableStore, ID_FIELD}, protocol};
+    use crate::{table::TableStore, protocol};
 
+    pub const ID_INDEX:usize = 0;
+    pub const ID_FIELD:&str = "id";
+    
+    
     pub const FIELD_A:&str = "a";
     pub const FIELD_B:&str = "b";
     pub const FIELD_C:&str = "c";
@@ -135,8 +140,9 @@ pub mod test_util {
         if column_groups.contains(&COLGROUP_1) {
             table_store.add_column_group(protocol::ColumnGroupMetadata { 
                 column_group: COLGROUP_1.to_string(),
+                id_columns: vec![ID_FIELD.to_string()],
                 partition_spec: Some(protocol::column_group_metadata::PartitionSpec::KeyHash(
-                    protocol::KeyHashPartition { num_keys: 0, num_partitions: 2 })
+                    protocol::KeyHashPartition { partition_keys: vec![ID_FIELD.to_string()], num_partitions: 2 })
                 )}).await.unwrap();
 
             table_store.add_column(protocol::ColumnMetadata { column: FIELD_A.to_string(), column_group: COLGROUP_1.to_string() }).await.unwrap();
@@ -146,8 +152,9 @@ pub mod test_util {
         if column_groups.contains(&COLGROUP_2) {        
             table_store.add_column_group(protocol::ColumnGroupMetadata { 
                 column_group: COLGROUP_2.to_string(),
+                id_columns: vec![ID_FIELD.to_string()],
                 partition_spec: Some(protocol::column_group_metadata::PartitionSpec::KeyHash(
-                    protocol::KeyHashPartition { num_keys: 0, num_partitions: 1 })
+                    protocol::KeyHashPartition { partition_keys: vec![ID_FIELD.to_string()], num_partitions: 1 })
                 )}).await.unwrap();
 
             table_store.add_column(protocol::ColumnMetadata { column: FIELD_C.to_string(), column_group: COLGROUP_2.to_string() }).await.unwrap();
@@ -158,24 +165,27 @@ pub mod test_util {
     }
 
     pub fn make_schema(columns: &Vec<&str>) -> Arc<Schema> {
-        let mut fields = vec![ Field::new(ID_FIELD, DataType::Int64, false) ];
-        let mut additional = columns.iter().map(|name| Field::new(name, DataType::Float32, false)).collect::<Vec<Field>>();
+        let mut fields = vec![ Field::new(ID_FIELD, DataType::Int32, false) ];
+        let mut additional = columns.iter().map(|name| Field::new(name, DataType::Int32, false)).collect::<Vec<Field>>();
 
         fields.append(&mut additional);
 
         Arc::new(Schema::new(fields))
     }
 
-    pub fn make_data(num_records: u64, start_id: u64, column_groups: &Vec<&str>) -> RecordBatch {
+    pub fn make_data(num_records: i32, 
+                     start_id: i32,
+                     data_offset: i32,
+                     column_groups: &Vec<&str>) -> RecordBatch {
         let id_col = (0..num_records).into_iter()
-            .map(|idx| Some(format!("{:08}", idx+start_id).as_bytes().to_owned()))
+            .map(|idx| Some(idx+start_id))
             .collect::<Vec<_>>();
-        let id = Arc::new(BinaryArray::from_iter(id_col)) as _;
+        let id = Arc::new(Int32Array::from_iter(id_col)) as _;
 
         let val_col = (0..num_records).into_iter()
-            .map(|idx| 1.3 * idx as f32)
-            .collect::<Vec<f32>>();
-        let val:Arc<dyn Array> = Arc::new(Float32Array::from_iter(val_col)) as _;
+            .map(|idx| data_offset + 2 * idx)
+            .collect::<Vec<i32>>();
+        let val:Arc<dyn Array> = Arc::new(Int32Array::from_iter(val_col)) as _;
 
         let mut cols = vec![ (ID_FIELD, id)];
 
@@ -188,6 +198,80 @@ pub mod test_util {
         }
 
         RecordBatch::try_from_iter(cols).unwrap()
+    }
+
+    /// returns a table with 3 columns of i32 in memory
+    pub fn build_table_i32(
+        a: (&str, &Vec<i32>),
+        b: (&str, &Vec<i32>),
+        c: (&str, &Vec<i32>),
+    ) -> RecordBatch {
+        let schema = Schema::new(vec![
+            Field::new(a.0, DataType::Int32, false),
+            Field::new(b.0, DataType::Int32, false),
+            Field::new(c.0, DataType::Int32, false),
+        ]);
+
+        RecordBatch::try_new(
+            Arc::new(schema),
+            vec![
+                Arc::new(Int32Array::from(a.1.clone())),
+                Arc::new(Int32Array::from(b.1.clone())),
+                Arc::new(Int32Array::from(c.1.clone())),
+            ],
+        )
+        .unwrap()
+    }
+
+    /// returns a table with 5 columns of i32 in memory
+    pub fn build_table_i32_5(
+        a: (&str, &Vec<i32>),
+        b: (&str, &Vec<i32>),
+        c: (&str, &Vec<i32>),
+        d: (&str, &Vec<i32>),
+        e: (&str, &Vec<i32>),
+    ) -> RecordBatch {
+        let schema = Schema::new(vec![
+            Field::new(a.0, DataType::Int32, false),
+            Field::new(b.0, DataType::Int32, false),
+            Field::new(c.0, DataType::Int32, false),
+            Field::new(d.0, DataType::Int32, false),
+            Field::new(e.0, DataType::Int32, false),
+        ]);
+
+        RecordBatch::try_new(
+            Arc::new(schema),
+            vec![
+                Arc::new(Int32Array::from(a.1.clone())),
+                Arc::new(Int32Array::from(b.1.clone())),
+                Arc::new(Int32Array::from(c.1.clone())),
+                Arc::new(Int32Array::from(d.1.clone())),
+                Arc::new(Int32Array::from(e.1.clone())),
+            ],
+        )
+        .unwrap()
+    }
+
+    pub fn int32_col(data: &Vec<i32>) -> ArrayRef {
+        Arc::new(Int32Array::from(data.clone()))
+    }
+
+    pub fn str_col(data: &Vec<&str>) -> ArrayRef {
+        Arc::new(StringArray::from(data.clone()))
+    }
+    
+    /// returns a table with 5 columns of i32 in memory
+    pub fn build_table(cols: &Vec<(&str, ArrayRef)>) -> RecordBatch {
+        let schema = Schema::new(cols.iter().map(|(name, col_data)| {
+            Field::new(name, col_data.data_type().clone(), false)
+        }).collect());
+
+
+        let table_data:Vec<ArrayRef> = cols.iter().map(|(name, col_data)| {
+            col_data.clone()
+        }).collect();
+
+        RecordBatch::try_new(Arc::new(schema),table_data).unwrap()
     }
 
 }

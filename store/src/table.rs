@@ -1,3 +1,5 @@
+use std::convert::TryFrom;
+use arrow::compute::SortOptions;
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use datafusion::datasource::file_format::FileFormat;
@@ -7,10 +9,18 @@ use datafusion::datasource::object_store::ObjectStoreUrl;
 use datafusion::error::{Result as DataFusionResult, DataFusionError};
 use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::TableType;
-use datafusion::physical_plan::{ExecutionPlan, Statistics};
+use datafusion::logical_plan::DFSchema;
+use datafusion::physical_expr::create_physical_expr;
+use datafusion::physical_expr::execution_props::ExecutionProps;
+use datafusion::physical_plan::expressions::Column;
+use datafusion::physical_plan::projection::ProjectionExec;
+use datafusion::physical_plan::sort_merge_join::SortMergeJoinExec;
+use datafusion::physical_plan::{ExecutionPlan, Statistics, PhysicalExpr};
 use datafusion::physical_plan::file_format::FileScanConfig;
-use datafusion::prelude::Expr;
+use datafusion::prelude::{Expr, JoinType, coalesce, col};
 use datafusion::scalar::ScalarValue;
+use futures::{stream, StreamExt};
+use prost_types::field;
 use std::collections::HashMap;
 use std::sync::Arc;
 use arrow::datatypes::{SchemaRef as ArrowSchemaRef, Schema as ArrowSchema};
@@ -19,6 +29,7 @@ use itertools::Itertools;
 use object_store::{ObjectStore, ObjectMeta};
 use object_store::path::Path as ObjectStorePath;
 
+use crate::datatypes::timestamp_to_datetime;
 use crate::log::{TransactionLog, ReferencePoint, TableAction};
 use crate::protocol;
 use crate::result::{CalicoResult, CalicoError};
@@ -44,17 +55,6 @@ pub struct Table {
     reference: ReferencePoint,
 }
 
-pub const ID_INDEX:usize = 0;
-pub const ID_FIELD:&str = "id";
-
-fn timestamp_to_datetime(timestamp: u64) -> DateTime<Utc> {
-    // todo: move to a utility
-    let ts_secs:i64 = (timestamp / 1000).try_into().unwrap();
-    let ts_ns = (timestamp % 1000) * 1_000_000;
-
-    DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(ts_secs, ts_ns as u32), Utc)
-}
-
 impl From<&protocol::File> for ObjectMeta {
     fn from(file: &protocol::File) -> Self {
         let last_modified = timestamp_to_datetime(file.update_time);
@@ -63,6 +63,12 @@ impl From<&protocol::File> for ObjectMeta {
             last_modified,
             size: file.file_size as usize,
         }
+    }
+}
+
+impl From<CalicoError> for DataFusionError {
+    fn from(err: CalicoError) -> Self {
+        DataFusionError::External(Box::new(err))
     }
 }
 
@@ -207,28 +213,118 @@ impl TableStore {
     // Use Table configuration to determine the map of column groups to columns for the table
     pub async fn extract_column_groups(&self, schema:SchemaRef) -> CalicoResult<Vec<(String, Vec<usize>)>> {
 
-        let mut column_groups = vec![];
+        let field_names = schema.fields().iter().map(|field| field.name()).collect::<Vec<&String>>();
 
-        // Map columns to column group names, keeping ID untouched so that we preserve indexes into the field schema
-        for field in schema.fields() {
-            if field.name() != ID_FIELD {
-                column_groups.push(self.column_group_for_column(field.name()).await?);
-            } else {
-                column_groups.push(ID_FIELD.to_string());
-            }
+        let mut column_groups:Vec<Option<String>> = vec![];
+        
+        // load the column groups for all fields, None will mean it's an ID (shared across columns)
+        for field_name in field_names.iter() {
+            column_groups.push(self.column_group_for_column(field_name).await.ok());
         }
 
         // now map this to column_group -> vec[indices]
-        let output = column_groups.iter().enumerate()
+        let column_groups:Vec<(String, Vec<usize>)> = column_groups.iter()
+            .enumerate()
             .group_by(|(_, column_group)| *column_group)
             .into_iter()
-            .filter(|(key, _)| *key != ID_FIELD)
             .map(|(key, group)| (key.clone(), group.map(|(column_index, _)| column_index).collect::<Vec<usize>>()))
+            .filter_map(|(opt_column_group, ids)| match opt_column_group {
+                Some(column_group) => Some((column_group, ids)),
+                None => None
+            })
             .collect::<Vec<(String, Vec<usize>)>>();
+
+        let mut output = vec![];
+
+        // now load and prepend the ID field indices as well
+        for (column_group, field_indices) in column_groups {
+            let column_group_config = self.column_group_meta(column_group.as_str()).await?;
+            let mut all_indices = column_group_config.id_columns.iter().map(|id_field| {
+                match field_names.iter().position(|field_name| *field_name == id_field) {
+                    Some(id_index) => id_index,
+                    None => panic!("missing required id field for batch")
+                }
+            }).collect::<Vec<usize>>();
+
+            all_indices.extend(field_indices.iter().cloned());
+
+            output.push((column_group, all_indices));
+        }
 
         Ok(output)
     }
+
+        /*
+            self.column_group_meta(column_group_name.as_str()).await?
+
+        .iter().map(|f)
+
+        let mut column_group_map = HashMap::<String, Vec<usize>>::new();
+
+        for (field_idx, field_name) in field_names.iter().enumerate() {
+            match self.column_group_for_column(field_name).await {
+                Ok(column_group) => {
+                    match column_group_map.get(&column_group) {
+                        None => {
+                            let column_group_config = self.column_group_meta(column_group.as_str()).await?;
+                            let mut column_indices = column_group_config.id_columns.iter().map(|id_field| {
+                                match field_names.iter().position(|field_name| *field_name == id_field) {
+                                    Some(id_index) => id_index,
+                                    None => panic!("missing required id field for batch")
+                                }
+
+
+                            }).collect::<Vec<usize>>();
+
+                            column_indices.push(field_idx);
+
+                            column_group_map.insert(column_group, column_indices);
+                        },
+                        Some(column_indices) => {
+                            column_indices.push(field_idx);
+                        }
+                    }
+                },
+                Err(_) => {}
+            }
+        };
+ */
 }
+
+#[derive(Debug)]
+struct StatisticsForMergeExec {
+    inner: Arc<dyn ExecutionPlan>
+}
+
+impl ExecutionPlan for StatisticsForMergeExec {
+    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn schema(&self) -> ArrowSchemaRef { self.inner.schema() }
+    fn output_partitioning(&self) -> datafusion::physical_plan::Partitioning { self.inner.output_partitioning() }
+    fn output_ordering(&self) -> Option<&[datafusion::physical_expr::PhysicalSortExpr]> { self.inner.output_ordering() }
+
+    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> { vec![self.inner.clone()] }
+
+    fn with_new_children(
+        self: Arc<Self>,
+        _children: Vec<Arc<dyn ExecutionPlan>>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        todo!()
+    }
+
+    fn execute(
+        &self,
+        partition: usize,
+        context: Arc<datafusion::execution::context::TaskContext>,
+    ) -> DataFusionResult<datafusion::physical_plan::SendableRecordBatchStream> {
+        self.inner.execute(partition, context)
+    }
+
+    fn statistics(&self) -> Statistics {
+        Statistics::default()
+    }
+}
+
+
 
 impl Table {
     // Use Table configuration to determine the map of column groups to columns for the table
@@ -246,12 +342,106 @@ impl Table {
         }))
     }
 
-}
+    async fn build_action_plan(&self, 
+                               _projection: &Option<Vec<usize>>,
+                               filters: &[Expr],
+                               limit: Option<usize>,
+                               column_group:&str,
+                               action:&TableAction) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
 
-impl From<CalicoError> for DataFusionError {
-    fn from(err: CalicoError) -> Self {
-        DataFusionError::External(Box::new(err))
+        let file_groups = make_table_for_action(&action, column_group);
+        let statistics = make_stats_for_action(&action, column_group);
+        let file_schema = make_schema_for_action(&self.store.object_store, &action, column_group).await;
+
+        // todo: when we support open partition columns, update this to match
+        let table_partition_cols = vec![];
+
+        // todo: use projection and self.table_schema to determine the set of fields we need from 
+        // file_schema. Add those indices plus the ID indices to get sub_projection
+        let sub_projection = None;
+
+        ParquetFormat::default()
+            .create_physical_plan(
+                FileScanConfig {
+                    object_store_url: self.store.object_store_url.clone(),
+                    file_schema,
+                    file_groups,
+                    statistics,
+                    projection: sub_projection,
+                    limit,
+                    table_partition_cols,
+                },
+                filters,
+            )
+            .await
     }
+
+    fn merge_action_plan(&self, column_group: &protocol::ColumnGroupMetadata, action:&TableAction, left: Arc<dyn ExecutionPlan>, right: Arc<dyn ExecutionPlan>) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        let on = column_group.id_columns.iter().map(|column| {
+            let id_col_left = Column::new(column.as_str(), 0);
+            let id_col_right = Column::new(format!("new_{column}").as_str(), 0);
+            (id_col_left, id_col_right)
+        }).collect::<Vec<(Column, Column)>>();
+        let sort_options = vec![SortOptions::default(); on.len()];
+
+        // map right cols to new_$col so that we can have a reasonable names for final expression
+        let preproject_expr = right.schema().fields().iter().enumerate().map(|(index, field)| {
+            let field_name = field.name();
+
+            let expr:Arc<dyn PhysicalExpr> = Arc::new(Column::new(field_name, index));
+
+            (expr, format!("new_{field_name}"))
+        }).collect::<Vec<_>>();
+        let right = Arc::new(ProjectionExec::try_new(preproject_expr, right)?);
+
+        let merge = Arc::new(SortMergeJoinExec::try_new(left.clone(), right.clone(), on, JoinType::Full, sort_options, false)?);
+        
+        // Put the merge in a wrapper since there is a todo! in statistics for SortMergeJoinExec, frighteningly
+        let wrapped_inner = Arc::new(StatisticsForMergeExec { inner: merge.clone() });
+
+        // Now perform the logical projection. This is where new values overwrite old or whateever, typically coalese[new, old]
+
+        let merge_schema = merge.schema();
+        let merge_dfschema:DFSchema = DFSchema::try_from((*merge_schema).clone())?;
+        let execution_props = ExecutionProps::new();
+
+        let postproject_expr = left.schema().fields().iter().map(|field| {
+            let field_name = field.name();
+
+            let left_col = col(field_name);
+            let right_col = col(format!("new_{field_name}").as_str());
+
+            // For now, just use coalesce for everything. When we have merge expressions we'll stick that here
+            let logical_expr = coalesce(vec![right_col, left_col]);
+
+            let physical_expr = create_physical_expr(
+                &logical_expr,
+                &merge_dfschema,
+                &merge_schema,
+                &execution_props,
+            ).unwrap();
+
+            (physical_expr, field_name.clone())
+        }).collect::<Vec<_>>();
+
+        let output = Arc::new(ProjectionExec::try_new(postproject_expr, wrapped_inner)?);
+
+        Ok(output)
+    }
+
+    fn positional_projection(&self, positional:&Vec<usize>, schema:SchemaRef, exec: Arc<dyn ExecutionPlan>) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        let fields = schema.fields();
+        
+        let projection:Vec<_> = positional.iter().map(|idx| {
+            let name = fields[*idx].name();
+            let col:Arc<dyn PhysicalExpr> = Arc::new(Column::new(name, *idx));
+            
+            (col, name.to_owned())
+        }).collect();
+
+        Ok(Arc::new(ProjectionExec::try_new(projection, exec)?))
+    }
+
 }
 
 #[async_trait]
@@ -283,6 +473,7 @@ impl TableProvider for Table {
         // for now just one column group supported
         assert_eq!(column_groups.len(), 1);
         let column_group = &column_groups[0].0;
+        let column_group_meta = self.store.column_group_meta(&column_group.as_str()).await?;
 
         // todo[split_transaction_log]: map the column groups to the set of transaction logs that we should query
 
@@ -291,31 +482,25 @@ impl TableProvider for Table {
         let table = commit.view(100).await?;
         let actions = table.actions();
 
-        // for now just one action supported
-        assert_eq!(actions.len(), 1);
+        let mut plan:Option<Arc<dyn ExecutionPlan>> = None;
 
-        let file_groups = make_table_for_action(&actions[0], column_group);
-        let statistics = make_stats_for_action(&actions[0], column_group);
-        let file_schema = make_schema_for_action(&self.store.object_store, &actions[0], column_group).await;
+        for action in actions {
+            // todo: patch the projection such that we don't lose the ID column
+            let subplan = self.build_action_plan(projection, filters, limit, column_group, &action).await?;
 
-        // todo: when we support open partition columns, update this to match
-        let table_partition_cols = vec![ID_FIELD.to_string()];
+            plan = match plan {
+                Some(prior) => Some(self.merge_action_plan(&column_group_meta, &action, prior, subplan)?),
+                None => Some(subplan)
+            }
+        }
 
-        ParquetFormat::default()
-            .create_physical_plan(
-                FileScanConfig {
-                    object_store_url: self.store.object_store_url.clone(),
-                    file_schema,
-                    file_groups,
-                    statistics,
-                    projection: projection.clone(),
-                    limit,
-                    table_partition_cols,
-                },
-                filters,
-            )
-            .await
+        // apply the final projection to get it to match the expected schema
+        plan = match projection {
+            Some(projection) => plan.and_then(|plan| Some(self.positional_projection(projection, plan.schema(), plan).ok()?)),
+            None => plan
+        };
 
+        plan.ok_or(DataFusionError::Internal("Failed to load at least one action plan".to_string()))
     }
 
     fn get_table_definition(&self) -> Option< &str>{
@@ -336,12 +521,12 @@ mod tests {
     use arrow::datatypes::{DataType, Schema, Field};
     use arrow::record_batch::RecordBatch;
     use datafusion::from_slice::FromSlice;
-    use datafusion::prelude::SessionContext;
+    use datafusion::{assert_batches_eq, assert_batches_sorted_eq};
     use std::future::Future;
     use tempfile::tempdir;
     use crate::log::ReferencePoint;
     use crate::operations::append_operation;
-    use crate::table::{ID_FIELD, Table};
+    use crate::table::Table;
     use crate::test_util::*;
 
     use super::TableStore;
@@ -361,7 +546,7 @@ mod tests {
         ).unwrap()
     }
 
-    async fn test_runner<F, Fut>(col_groups: &Vec<&str>, fields: &Vec<&str>, lambda: F) -> Vec<RecordBatch> 
+    async fn test_runner<F, Fut>(col_groups: &Vec<&str>, fields: &Vec<&str>, sql: &str, lambda: F) -> Vec<RecordBatch> 
     where
         F: FnOnce(Arc<TableStore>) -> Fut,
         Fut: Future<Output = ()>
@@ -377,13 +562,11 @@ mod tests {
         let table_schema = make_schema(&fields);
         
         let table = Table::define(table_store, table_schema, reference).unwrap();    
-        ctx.register_table("test", table);
+        ctx.register_table("test", table).unwrap();
 
-        let sql = format!("SELECT count(*) as A, min({}) as B, max({}) as C from test", fields[0], fields[1]);
-        let df = ctx.sql(sql.as_str()).await.unwrap();
+        let df = ctx.sql(sql).await.unwrap();
         
         let actual: Vec<RecordBatch> = df.collect().await.unwrap();
-        assert_eq!(actual.len(),1);
 
         actual
     }
@@ -392,12 +575,34 @@ mod tests {
         let col_groups = vec![COLGROUP_UNPARTITIONED];
         let columns = vec![FIELD_C, FIELD_D];
 
-        let actual = test_runner(&col_groups.clone(), &columns, |table_store| async move {
-            append_operation(&table_store, &make_data(10,0, &col_groups)).await.unwrap();
+        let batch_1 = build_table_i32(
+            (ID_FIELD, &vec![0, 1, 2, 3, 4, 5, 6, 7, 8]),
+            (FIELD_C,  &vec![1, 2, 3, 4, 5, 6, 7, 8, 9]),
+            (FIELD_D,  &vec![9, 8, 7, 6, 5, 4, 3, 2, 1]),
+        );
+
+        let sql = format!("SELECT * FROM test");
+
+        let actual = test_runner(&col_groups.clone(), &columns, sql.as_str(), |table_store| async move {
+            append_operation(&table_store, &batch_1).await.unwrap();
         }).await;
 
-        let expected = make_expected(10,0.0,11.7);
-        assert_eq!(format!("{:?}", actual[0]), format!("{:?}", expected));
+        let expected = vec![
+            "+----+---+---+",
+            "| id | c | d |",
+            "+----+---+---+",
+            "| 0  | 1 | 9 |",
+            "| 1  | 2 | 8 |",
+            "| 2  | 3 | 7 |",
+            "| 3  | 4 | 6 |",
+            "| 4  | 5 | 5 |",
+            "| 5  | 6 | 4 |",
+            "| 6  | 7 | 3 |",
+            "| 7  | 8 | 2 |",
+            "| 8  | 9 | 1 |",
+            "+----+---+---+",
+        ];
+        assert_batches_sorted_eq!(expected, &actual);
     }
 
     #[tokio::test]
@@ -405,40 +610,98 @@ mod tests {
         let col_groups = vec![COLGROUP_PARTITIONED];
         let columns = vec![FIELD_A, FIELD_B];
 
-        let actual = test_runner(&col_groups.clone(), &columns, |table_store| async move {
-            append_operation(&table_store, &make_data(10,0, &col_groups)).await.unwrap();
+        let batch_1 = build_table_i32(
+            (ID_FIELD, &vec![0, 1, 2, 3, 4, 5, 6, 7, 8]),
+            (FIELD_A,  &vec![1, 2, 3, 4, 5, 6, 7, 8, 9]),
+            (FIELD_B,  &vec![9, 8, 7, 6, 5, 4, 3, 2, 1]),
+        );
+
+        let sql = format!("SELECT * FROM test");
+
+        let actual = test_runner(&col_groups.clone(), &columns, sql.as_str(), |table_store| async move {
+            append_operation(&table_store, &batch_1).await.unwrap();
         }).await;
 
-        let expected = make_expected(10,0.0,11.7);
-        assert_eq!(format!("{:?}", actual[0]), format!("{:?}", expected));
+        let expected = vec![
+            "+----+---+---+",
+            "| id | a | b |",
+            "+----+---+---+",
+            "| 0  | 1 | 9 |",
+            "| 1  | 2 | 8 |",
+            "| 2  | 3 | 7 |",
+            "| 3  | 4 | 6 |",
+            "| 4  | 5 | 5 |",
+            "| 5  | 6 | 4 |",
+            "| 6  | 7 | 3 |",
+            "| 7  | 8 | 2 |",
+            "| 8  | 9 | 1 |",
+            "+----+---+---+",
+        ];
+        assert_batches_sorted_eq!(expected, &actual);
     }
-
+ 
+    /*
     #[tokio::test]
     async fn test_multiple_column_groups() {
         let col_groups = vec![COLGROUP_PARTITIONED, COLGROUP_UNPARTITIONED];
         let columns = vec![FIELD_A, FIELD_B, FIELD_C, FIELD_D];
 
         let actual = test_runner(&col_groups.clone(), &columns, |table_store| async move {
-            append_operation(&table_store, &make_data(10,0, &col_groups)).await.unwrap();
+            append_operation(&table_store, &make_data(10,0, 0, &col_groups)).await.unwrap();
         }).await;
 
         let expected = make_expected(10,0.0,11.7);
         assert_eq!(format!("{:?}", actual[0]), format!("{:?}", expected));
     }
+    */
 
     #[tokio::test]
     async fn test_non_overlapping_unpartitioned_commits() {
         let col_groups = vec![COLGROUP_UNPARTITIONED];
         let columns = vec![FIELD_C, FIELD_D];
 
-        let actual = test_runner(&col_groups.clone(), &columns, |table_store| async move {
-            append_operation(&table_store, &make_data(10,0, &col_groups)).await.unwrap();
-            append_operation(&table_store, &make_data(10,10, &col_groups)).await.unwrap();
-            append_operation(&table_store, &make_data(10,20, &col_groups)).await.unwrap();
+        let batch_1 = build_table_i32(
+            (ID_FIELD, &vec![0, 1, 2]),
+            (FIELD_C,  &vec![3, 4, 5]),
+            (FIELD_D,  &vec![4, 5, 6]),
+        );
+
+        let batch_2 = build_table_i32(
+            (ID_FIELD, &vec![3, 4, 5]),
+            (FIELD_C,  &vec![4, 5, 6]),
+            (FIELD_D,  &vec![7, 8, 9]),
+        );
+
+        let batch_3 = build_table_i32(
+            (ID_FIELD, &vec![6, 7, 8]),
+            (FIELD_C,  &vec![7, 8, 9]),
+            (FIELD_D,  &vec![1, 1, 1]),
+        );
+
+        let sql = format!("SELECT * FROM test");
+
+        let actual = test_runner(&col_groups.clone(), &columns, sql.as_str(), |table_store| async move {
+            append_operation(&table_store, &batch_1).await.unwrap();
+            append_operation(&table_store, &batch_2).await.unwrap();
+            append_operation(&table_store, &batch_3).await.unwrap();
         }).await;
 
-        let expected = make_expected(10,0.0,11.7);
-        assert_eq!(format!("{:?}", actual[0]), format!("{:?}", expected));
+        let expected = vec![
+            "+----+---+---+",
+            "| id | c | d |",
+            "+----+---+---+",
+            "| 0  | 1 | 4 |",
+            "| 1  | 2 | 5 |",
+            "| 2  | 3 | 6 |",
+            "| 3  | 4 | 7 |",
+            "| 4  | 5 | 8 |",
+            "| 5  | 6 | 9 |",
+            "| 6  | 7 | 1 |",
+            "| 7  | 8 | 1 |",
+            "| 8  | 9 | 1 |",
+            "+----+---+---+",
+        ];
+        assert_batches_sorted_eq!(expected, &actual);
     }
 
     #[tokio::test]
@@ -446,14 +709,41 @@ mod tests {
         let col_groups = vec![COLGROUP_UNPARTITIONED];
         let columns = vec![FIELD_C, FIELD_D];
 
-        let actual = test_runner(&col_groups.clone(), &columns, |table_store| async move {
-            append_operation(&table_store, &make_data(10,0, &col_groups)).await.unwrap();
-            append_operation(&table_store, &make_data(10,0, &col_groups)).await.unwrap();
-            append_operation(&table_store, &make_data(10,0, &col_groups)).await.unwrap();
+        let batch_1 = build_table_i32(
+            (ID_FIELD, &vec![0, 1, 2]),
+            (FIELD_C,  &vec![3, 4, 5]),
+            (FIELD_D,  &vec![4, 5, 6]),
+        );
+
+        let batch_2 = build_table_i32(
+            (ID_FIELD, &vec![0, 1, 2]),
+            (FIELD_C,  &vec![4, 5, 6]),
+            (FIELD_D,  &vec![7, 8, 9]),
+        );
+
+        let batch_3 = build_table_i32(
+            (ID_FIELD, &vec![0, 1, 2]),
+            (FIELD_C,  &vec![7, 8, 9]),
+            (FIELD_D,  &vec![1, 1, 1]),
+        );
+
+        let sql = format!("SELECT * FROM test");
+
+        let actual = test_runner(&col_groups.clone(), &columns, sql.as_str(), |table_store| async move {
+            append_operation(&table_store, &batch_1).await.unwrap();
+            append_operation(&table_store, &batch_2).await.unwrap();
+            append_operation(&table_store, &batch_3).await.unwrap();
         }).await;
 
-        let expected = make_expected(10,0.0,11.7);
-        assert_eq!(format!("{:?}", actual[0]), format!("{:?}", expected));
+        let expected = vec![
+            "+----+---+---+",
+            "| id | c | d |",
+            "+----+---+---+",
+            "| 0  | 7 | 1 |",
+            "| 1  | 8 | 1 |",
+            "| 2  | 9 | 1 |",
+            "+----+---+---+",
+        ];
+        assert_batches_sorted_eq!(expected, &actual);
     }
-
 }
