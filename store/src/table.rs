@@ -662,7 +662,7 @@ mod tests {
 
         let batch_1 = build_table_i32(
             (ID_FIELD, &vec![0, 1, 2]),
-            (FIELD_C,  &vec![3, 4, 5]),
+            (FIELD_C,  &vec![1, 2, 3]),
             (FIELD_D,  &vec![4, 5, 6]),
         );
 
@@ -750,7 +750,7 @@ mod tests {
     // todo: test support for string IDs
     // todo: test support for other numeric IDs
     // todo: test support for multiple IDs
-    
+
     // todo: test support for reading at a particular commit in history
 
 
