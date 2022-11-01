@@ -2,7 +2,7 @@
 use std::fmt;
 
 use arrow::record_batch::RecordBatch;
-use datafusion::physical_plan::{RecordBatchStream, DisplayFormatType};
+use datafusion::physical_plan::{RecordBatchStream, DisplayFormatType, SendableRecordBatchStream};
 use datafusion::physical_plan::metrics::MetricsSet;
 
 use crate::datatypes::datetime_to_timestamp;
@@ -51,7 +51,6 @@ struct AppendOperation {
     application: String,
     committer: String,
     commit_message: String,
-
 }
 
 impl AppendOperation {
@@ -59,11 +58,11 @@ impl AppendOperation {
         self
     }
 
-/*    fn with_batch_stream(self, stream: &RecordBatchStream) -> AppendOperation {
-
-    }
- */
-    fn with_commit_message(self, commit_message: &String) -> AppendOperation {
+    fn with_batch_stream(self, stream: SendableRecordBatchStream) -> AppendOperation {
+        self
+    } 
+    fn with_commit_message(mut self, commit_message: &String) -> AppendOperation {
+        self.commit_message = commit_message.to_string();
         self
     }
 }

@@ -100,16 +100,14 @@ pub mod result {
 pub mod test_util {
     use std::sync::Arc;
 
-    use arrow::{record_batch::RecordBatch, array::{BinaryArray, Float32Array, Array, Int64Array, UInt64Array, Int32Array, ArrayRef, StringArray}, datatypes::{Schema, DataType, Field}};
+    use arrow::{record_batch::RecordBatch, array::*, datatypes::{Schema, DataType, Field}};
     use datafusion::{datasource::object_store::{ObjectStoreRegistry, ObjectStoreUrl}, prelude::SessionContext};
     use object_store::{local::LocalFileSystem, ObjectStore};
-    use itertools::concat;
 
     use crate::{table::TableStore, protocol};
 
     pub const ID_INDEX:usize = 0;
     pub const ID_FIELD:&str = "id";
-    
     
     pub const FIELD_A:&str = "a";
     pub const FIELD_B:&str = "b";
@@ -252,8 +250,28 @@ pub mod test_util {
         .unwrap()
     }
 
-    pub fn int32_col(data: &Vec<i32>) -> ArrayRef {
+    pub fn i16_col(data: &Vec<i16>) -> ArrayRef {
+        Arc::new(Int16Array::from(data.clone()))
+    }
+
+    pub fn i32_col(data: &Vec<i32>) -> ArrayRef {
         Arc::new(Int32Array::from(data.clone()))
+    }
+
+    pub fn i64_col(data: &Vec<i64>) -> ArrayRef {
+        Arc::new(Int64Array::from(data.clone()))
+    }
+
+    pub fn u16_col(data: &Vec<u16>) -> ArrayRef {
+        Arc::new(UInt16Array::from(data.clone()))
+    }
+
+    pub fn u32_col(data: &Vec<u32>) -> ArrayRef {
+        Arc::new(UInt32Array::from(data.clone()))
+    }
+
+    pub fn u64_col(data: &Vec<u64>) -> ArrayRef {
+        Arc::new(UInt64Array::from(data.clone()))
     }
 
     pub fn str_col(data: &Vec<&str>) -> ArrayRef {

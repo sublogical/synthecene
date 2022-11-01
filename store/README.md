@@ -69,6 +69,8 @@ UPDATE
   * ~~Integrate with DataFusion for reads~~
   * ~~Support reading a dataset from single partition, commit & column-group~~
   * ~~Support direct reader for Rust~~
+* Cleanup
+  * Move multizip out to a utility class
 * DataFusion
   * Add BinaryType to TryFrom<&DataType> for ScalarValue
   * Add BinaryType to MergeSortJoin (line 1112)
@@ -147,20 +149,22 @@ UPDATE
   * ~~Support s3 storage~~ (untested)
   * ~~Support in-memory storage (for pre-commit read consistency)~~ (untested)
 * Partitioning
-  * Support column-based partitions
+  * Support explicit column-based partitions
   * Support multi-column partitions
   * Support bucketing/clustering
   * Support z-order
+  * ~~Support all integer numeric partitions~~
+  * ~~Support string partitionings~~
   * ~~Support column-group based partition definition~~
   * ~~Support hash-based partitions~~
   * ~~Support partitioning on one or more components of key-space~~
   * ~~Support column partitioning~~
 * Write APIs
-  * Support direct multi-partition writes from Rust
   * Support direct multi-partition writes from Python
   * Support direct multi-partition writes from Java/Scala
   * Support writes from Flink
   * Support writes from Spark
+  * ~~Support direct multi-partition writes from Rust~~
 * Tile-Stats
   * Support Datafusion Stats
   * Support HLL sketches

@@ -746,4 +746,12 @@ mod tests {
         ];
         assert_batches_sorted_eq!(expected, &actual);
     }
+
+    // todo: test support for string IDs
+    // todo: test support for other numeric IDs
+    // todo: test support for multiple IDs
+    
+    // todo: test support for reading at a particular commit in history
+
+
 }
