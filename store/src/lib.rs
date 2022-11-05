@@ -101,7 +101,7 @@ pub mod test_util {
     use std::sync::Arc;
 
     use arrow::{record_batch::RecordBatch, array::*, datatypes::{Schema, DataType, Field}};
-    use datafusion::{datasource::object_store::{ObjectStoreRegistry, ObjectStoreUrl}, prelude::SessionContext};
+    use datafusion::{datasource::object_store::{ ObjectStoreUrl}, prelude::SessionContext};
     use object_store::{local::LocalFileSystem, ObjectStore};
 
     use crate::{table::TableStore, protocol};
@@ -285,7 +285,7 @@ pub mod test_util {
         }).collect());
 
 
-        let table_data:Vec<ArrayRef> = cols.iter().map(|(name, col_data)| {
+        let table_data:Vec<ArrayRef> = cols.iter().map(|(_, col_data)| {
             col_data.clone()
         }).collect();
 

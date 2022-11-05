@@ -1,11 +1,10 @@
 use arrow::array::*;
 use arrow::compute::take;
-use arrow::datatypes::{Schema, DataType, ArrowPrimitiveType };
+use arrow::datatypes::{Schema, DataType };
 use arrow::record_batch::RecordBatch;
 use arrow::error::Result as ArrowResult;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use log::info;
-use std::any::Any;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hash;
@@ -15,35 +14,6 @@ use std::sync::Arc;
 use crate::result::{CalicoResult, CalicoError};
 use crate::protocol;
 use crate::table::TableStore;
-
-fn key_to_hash_partition<T>(key_hash: &protocol::KeyHashPartition, key: &T::Native) -> i32 
-    where T: ArrowPrimitiveType
-{
-    let mut s = DefaultHasher::new();
-
-    let key_any = key as &dyn Any;
-
-    macro_rules! hash_generic {
-        ($T:ty) => {
-            key_any.downcast_ref::<$T>().expect("Native type doesn't match declared arrow type").hash::<DefaultHasher>(&mut s)
-        }
-    }
-    
-    match T::DATA_TYPE {
-        DataType::Int8 => hash_generic!(i8),
-        DataType::Int16 => hash_generic!(i16),
-        DataType::Int32 => hash_generic!(i32),
-        DataType::Int64 => hash_generic!(i64),
-        DataType::UInt8 => hash_generic!(u8),
-        DataType::UInt16 => hash_generic!(u16),
-        DataType::UInt32 => hash_generic!(u32),
-        DataType::UInt64 => hash_generic!(u64),
-        DataType::Utf8 => hash_generic!(String),
-        _ => panic!("Partitioning not supported on that type")
-    }
-
-    return (s.finish() % key_hash.num_partitions as u64).try_into().unwrap();
-}
 
 // Maps the ID column from a record batch into an columns of partition indices for all records
 fn calc_partitions(column_group_config: &protocol::ColumnGroupMetadata, batch: &RecordBatch) -> CalicoResult<Int32Array> {

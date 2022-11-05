@@ -175,7 +175,7 @@ mod tests {
         // make sure the files are in the object store
     }
 
-    async fn test_new_append() {
+    async fn _test_new_append() {
         let temp = tempdir().unwrap();
         let ctx = provision_ctx(temp.path());
 

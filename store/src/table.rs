@@ -517,11 +517,8 @@ impl TableProvider for Table {
 mod tests {
     use std::sync::Arc;
 
-    use arrow::array::{Int64Array, Float32Array};
-    use arrow::datatypes::{DataType, Schema, Field};
     use arrow::record_batch::RecordBatch;
-    use datafusion::from_slice::FromSlice;
-    use datafusion::{assert_batches_eq, assert_batches_sorted_eq};
+    use datafusion::{ assert_batches_sorted_eq};
     use std::future::Future;
     use tempfile::tempdir;
     use crate::log::ReferencePoint;
@@ -530,21 +527,6 @@ mod tests {
     use crate::test_util::*;
 
     use super::TableStore;
-
-    fn make_expected(num: i64, min:f32, max:f32) -> RecordBatch{
-        RecordBatch::try_new(
-            Arc::new(Schema::new(vec![
-                Field::new("a", DataType::Int64, true),
-                Field::new("b", DataType::Float32, true),
-                Field::new("c", DataType::Float32, true),
-            ])),
-            vec![
-                Arc::new(Int64Array::from_slice(&[num])),
-                Arc::new(Float32Array::from_slice(&[min])),
-                Arc::new(Float32Array::from_slice(&[max])),
-            ],
-        ).unwrap()
-    }
 
     async fn test_runner<F, Fut>(col_groups: &Vec<&str>, fields: &Vec<&str>, sql: &str, lambda: F) -> Vec<RecordBatch> 
     where
