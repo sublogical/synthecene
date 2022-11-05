@@ -2,7 +2,7 @@
 use std::fmt;
 
 use arrow::record_batch::RecordBatch;
-use datafusion::physical_plan::{RecordBatchStream, DisplayFormatType, SendableRecordBatchStream};
+use datafusion::physical_plan::{DisplayFormatType, SendableRecordBatchStream};
 use datafusion::physical_plan::metrics::MetricsSet;
 
 use crate::datatypes::datetime_to_timestamp;
@@ -17,7 +17,7 @@ use crate::result::CalicoResult;
 // https://rust-unofficial.github.io/patterns/patterns/behavioural/command.html
 
 pub trait Operation<T> {
-    fn execute(&self, table_store: &TableStore) -> CalicoResult<T>;
+    fn execute(&mut self, table_store: &TableStore) -> CalicoResult<T>;
     fn rollback(&self, table_store: &TableStore) -> CalicoResult<()>;
 
     /// Return a snapshot of the set of [`Metric`]s for this
@@ -47,23 +47,38 @@ pub trait Operation<T> {
 }
 
 #[derive(Default, Debug)]
-struct AppendOperation {
-    application: String,
-    committer: String,
-    commit_message: String,
+pub struct AppendOperation {
+    pub application: String,
+    pub committer: String,
+    pub commit_message: String,
 }
 
 impl AppendOperation {
-    fn with_batch(self, batch: &RecordBatch) -> AppendOperation {
+    pub fn from_batch(batch: &RecordBatch) -> AppendOperation {
+        Self::default().with_batch(batch)
+    }
+
+    pub fn with_batch(self, _batch: &RecordBatch) -> AppendOperation {
         self
     }
 
-    fn with_batch_stream(self, stream: SendableRecordBatchStream) -> AppendOperation {
+    pub fn with_batch_stream(self, _stream: SendableRecordBatchStream) -> AppendOperation {
         self
     } 
-    fn with_commit_message(mut self, commit_message: &String) -> AppendOperation {
+    pub fn with_commit_message(mut self, commit_message: &str) -> AppendOperation {
         self.commit_message = commit_message.to_string();
         self
+    }
+}
+
+impl Operation<protocol::Commit> for AppendOperation {
+    fn execute(&mut self, _table_store: &TableStore) -> CalicoResult<protocol::Commit> {
+        todo!()
+        // append_operation(table_store, self.batch)
+    }
+
+    fn rollback(&self, _table_store: &TableStore) -> CalicoResult<()> {
+        todo!()
     }
 }
 
@@ -105,7 +120,7 @@ pub async fn append_operation(table_store: &TableStore,
         col_expr.to_vec(), 
         all_tile_files).await?;
 
-    let _new_head = log.fast_forward(MAINLINE, &commit.commit_id).await.unwrap();
+    let _new_head = log.fast_forward(MAINLINE, &commit.commit_id).await?;
 
     commits.push(commit.commit);
 
@@ -114,31 +129,32 @@ pub async fn append_operation(table_store: &TableStore,
 }
 
 
-struct CheckpointOperation {
+struct _CheckpointOperation {
 
 }
 
 
-struct RepartitionOperation {
+struct _RepartitionOperation {
 
 }
 
 
-struct SetColumnMetadataOperation {
+struct _SetColumnMetadataOperation {
 
 }
 
-struct SetColumnGroupMetadataOperation {
+struct _SetColumnGroupMetadataOperation {
 
 }
 
 
 #[cfg(test)]
 mod tests {
-    use datafusion::prelude::SessionContext;
     use tempfile::tempdir;
-    use crate::operations::append_operation;
+    use crate::operations::{ append_operation, Operation };
     use crate::test_util::*;
+
+    use super::AppendOperation;
 
     #[tokio::test]
     async fn test_append() {
@@ -157,5 +173,26 @@ mod tests {
         let history = head.history(100).await.unwrap();
         assert_eq!(history.len(), 3);
         // make sure the files are in the object store
+    }
+
+    async fn test_new_append() {
+        let temp = tempdir().unwrap();
+        let ctx = provision_ctx(temp.path());
+
+        let col_groups = vec![COLGROUP_1];
+        let table_store = provision_store(&ctx, &col_groups).await;
+
+        let batch = build_table(
+            &vec![
+                (ID_FIELD, i32_col(&vec![0, 1, 2])),
+                (FIELD_A, i32_col(&vec![11, 12, 13])),
+                (FIELD_B, i32_col(&vec![21, 22, 23])),
+            ]
+        );
+
+        AppendOperation::from_batch(&batch)
+            .with_commit_message("first commit")
+            .execute(&table_store).unwrap();
+
     }
 }

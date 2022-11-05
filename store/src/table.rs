@@ -1,7 +1,6 @@
 use std::convert::TryFrom;
 use arrow::compute::SortOptions;
 use async_trait::async_trait;
-use chrono::{DateTime, NaiveDateTime, Utc};
 use datafusion::datasource::file_format::FileFormat;
 use datafusion::datasource::file_format::parquet::ParquetFormat;
 use datafusion::datasource::listing::PartitionedFile;
@@ -19,8 +18,6 @@ use datafusion::physical_plan::{ExecutionPlan, Statistics, PhysicalExpr};
 use datafusion::physical_plan::file_format::FileScanConfig;
 use datafusion::prelude::{Expr, JoinType, coalesce, col};
 use datafusion::scalar::ScalarValue;
-use futures::{stream, StreamExt};
-use prost_types::field;
 use std::collections::HashMap;
 use std::sync::Arc;
 use arrow::datatypes::{SchemaRef as ArrowSchemaRef, Schema as ArrowSchema};
@@ -376,7 +373,8 @@ impl Table {
             .await
     }
 
-    fn merge_action_plan(&self, column_group: &protocol::ColumnGroupMetadata, action:&TableAction, left: Arc<dyn ExecutionPlan>, right: Arc<dyn ExecutionPlan>) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+    fn merge_action_plan(&self, column_group: &protocol::ColumnGroupMetadata, _action:&TableAction, left: Arc<dyn ExecutionPlan>, right: Arc<dyn ExecutionPlan>) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+
         let on = column_group.id_columns.iter().map(|column| {
             let id_col_left = Column::new(column.as_str(), 0);
             let id_col_right = Column::new(format!("new_{column}").as_str(), 0);
@@ -412,6 +410,8 @@ impl Table {
             let right_col = col(format!("new_{field_name}").as_str());
 
             // For now, just use coalesce for everything. When we have merge expressions we'll stick that here
+
+            // todo: use action to side the merge operation
             let logical_expr = coalesce(vec![right_col, left_col]);
 
             let physical_expr = create_physical_expr(

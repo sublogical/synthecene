@@ -1,6 +1,6 @@
 use arrow::array::*;
 use arrow::compute::take;
-use arrow::datatypes::{Schema, DataType, ArrowPrimitiveType, Int32Type};
+use arrow::datatypes::{Schema, DataType, ArrowPrimitiveType };
 use arrow::record_batch::RecordBatch;
 use arrow::error::Result as ArrowResult;
 use datafusion::physical_plan::SendableRecordBatchStream;
@@ -130,9 +130,6 @@ fn calc_hash_partitions(key_hash: &protocol::KeyHashPartition, batch: &RecordBat
             self.0.iter_mut().map(Iterator::next).collect()
         }
     }
-    let mut hasher = DefaultHasher::new();
-
-
     let zipped_columns = Multizip(column_hash_iterators);
 
     let partitions:Int32Array = zipped_columns.map(|hashables| {
