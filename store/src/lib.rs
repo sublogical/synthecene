@@ -1,6 +1,14 @@
+#[cfg(host_family = "windows")]
+macro_rules! PATH_SEPARATOR {() => (
+    r"\"
+)}
+#[cfg(not(host_family = "windows"))]
+macro_rules! PATH_SEPARATOR {() => (
+    r"/"
+)}
+
 pub mod protocol {
-    // todo: not windows specific (gah)
-    include!(concat!(env!("OUT_DIR"), "\\calico.protocol.rs"));
+    include!(concat!(env!("OUT_DIR"), PATH_SEPARATOR!(), "calico.protocol.rs"));
 }
 
 mod writer;
