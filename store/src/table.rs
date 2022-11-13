@@ -522,7 +522,7 @@ mod tests {
     use std::future::Future;
     use tempfile::tempdir;
     use crate::log::ReferencePoint;
-    use crate::operations::append_operation;
+    use crate::operation::append::append_operation;
     use crate::table::Table;
     use crate::test_util::*;
 
@@ -566,7 +566,7 @@ mod tests {
         let sql = format!("SELECT * FROM test");
 
         let actual = test_runner(&col_groups.clone(), &columns, sql.as_str(), |table_store| async move {
-            append_operation(&table_store, &batch_1).await.unwrap();
+            append_operation(table_store, batch_1).await.unwrap();
         }).await;
 
         let expected = vec![
@@ -601,7 +601,7 @@ mod tests {
         let sql = format!("SELECT * FROM test");
 
         let actual = test_runner(&col_groups.clone(), &columns, sql.as_str(), |table_store| async move {
-            append_operation(&table_store, &batch_1).await.unwrap();
+            append_operation(table_store, batch_1).await.unwrap();
         }).await;
 
         let expected = vec![
@@ -663,9 +663,9 @@ mod tests {
         let sql = format!("SELECT * FROM test");
 
         let actual = test_runner(&col_groups.clone(), &columns, sql.as_str(), |table_store| async move {
-            append_operation(&table_store, &batch_1).await.unwrap();
-            append_operation(&table_store, &batch_2).await.unwrap();
-            append_operation(&table_store, &batch_3).await.unwrap();
+            append_operation(table_store.clone(), batch_1).await.unwrap();
+            append_operation(table_store.clone(), batch_2).await.unwrap();
+            append_operation(table_store.clone(), batch_3).await.unwrap();
         }).await;
 
         let expected = vec![
@@ -712,9 +712,9 @@ mod tests {
         let sql = format!("SELECT * FROM test");
 
         let actual = test_runner(&col_groups.clone(), &columns, sql.as_str(), |table_store| async move {
-            append_operation(&table_store, &batch_1).await.unwrap();
-            append_operation(&table_store, &batch_2).await.unwrap();
-            append_operation(&table_store, &batch_3).await.unwrap();
+            append_operation(table_store.clone(), batch_1).await.unwrap();
+            append_operation(table_store.clone(), batch_2).await.unwrap();
+            append_operation(table_store.clone(), batch_3).await.unwrap();
         }).await;
 
         let expected = vec![

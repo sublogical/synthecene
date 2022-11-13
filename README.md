@@ -3,11 +3,6 @@
 
 
 
-# TODO
-
-* Annotation CX
-* Data Engine CX
-
 
 # Applications
 

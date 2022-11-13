@@ -16,7 +16,7 @@ mod writer;
 pub mod datatypes;
 pub mod log;
 pub mod object;
-pub mod operations;
+pub mod operation;
 pub mod partition;
 pub mod table;
 // pub mod reader;

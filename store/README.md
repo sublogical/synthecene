@@ -84,7 +84,9 @@ UPDATE
   * Move partitioning to use discrete values of a set of partition columns
   * Read schema from transaction log
 * Operator API
-  * Move to Command Pattern
+  * ~~Move to Command Pattern~~
+  * Support streaming write
+  * Refactor operator pattern for disaggregated writes
   * DDL Operations
   * Direct Checkpoint
   * Garbage Collect Data
