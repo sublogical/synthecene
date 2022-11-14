@@ -773,6 +773,109 @@ mod tests {
 
     #[tokio::test]
     async fn test_alt_numeric_id_table() {
+        let test_cases = vec![
+            vec![
+                build_table(&vec![
+                    (ID_FIELD, i16_col(&vec![0, 1, 2, 3, 4, 5, 6, 7, 8])),
+                    (FIELD_A, i32_col(&vec![11, 12, 13, 14, 15, 16, 17, 18, 19])),
+                    (FIELD_B, i32_col(&vec![21, 22, 23, 24, 25, 26, 27, 28, 29])),
+                ]),
+                build_table(&vec![
+                    (ID_FIELD, i16_col(&vec![0, 1, 2, 3, 4, 5, 6, 7, 8])),
+                    (FIELD_A, i32_col(&vec![31, 32, 33, 34, 35, 36, 37, 38, 39])),
+                    (FIELD_B, i32_col(&vec![41, 42, 43, 44, 45, 46, 47, 48, 49])),
+                ]),
+            ],
+            vec![
+                build_table(&vec![
+                    (ID_FIELD, i32_col(&vec![0, 1, 2, 3, 4, 5, 6, 7, 8])),
+                    (FIELD_A, i32_col(&vec![11, 12, 13, 14, 15, 16, 17, 18, 19])),
+                    (FIELD_B, i32_col(&vec![21, 22, 23, 24, 25, 26, 27, 28, 29])),
+                ]),
+                build_table(&vec![
+                    (ID_FIELD, i32_col(&vec![0, 1, 2, 3, 4, 5, 6, 7, 8])),
+                    (FIELD_A, i32_col(&vec![31, 32, 33, 34, 35, 36, 37, 38, 39])),
+                    (FIELD_B, i32_col(&vec![41, 42, 43, 44, 45, 46, 47, 48, 49])),
+                ]),
+            ],
+            vec![
+                build_table(&vec![
+                    (ID_FIELD, i64_col(&vec![0, 1, 2, 3, 4, 5, 6, 7, 8])),
+                    (FIELD_A, i32_col(&vec![11, 12, 13, 14, 15, 16, 17, 18, 19])),
+                    (FIELD_B, i32_col(&vec![21, 22, 23, 24, 25, 26, 27, 28, 29])),
+                ]),
+                build_table(&vec![
+                    (ID_FIELD, i64_col(&vec![0, 1, 2, 3, 4, 5, 6, 7, 8])),
+                    (FIELD_A, i32_col(&vec![31, 32, 33, 34, 35, 36, 37, 38, 39])),
+                    (FIELD_B, i32_col(&vec![41, 42, 43, 44, 45, 46, 47, 48, 49])),
+                ]),
+            ],
+            vec![
+                build_table(&vec![
+                    (ID_FIELD, u16_col(&vec![0, 1, 2, 3, 4, 5, 6, 7, 8])),
+                    (FIELD_A, i32_col(&vec![11, 12, 13, 14, 15, 16, 17, 18, 19])),
+                    (FIELD_B, i32_col(&vec![21, 22, 23, 24, 25, 26, 27, 28, 29])),
+                ]),
+                build_table(&vec![
+                    (ID_FIELD, u16_col(&vec![0, 1, 2, 3, 4, 5, 6, 7, 8])),
+                    (FIELD_A, i32_col(&vec![31, 32, 33, 34, 35, 36, 37, 38, 39])),
+                    (FIELD_B, i32_col(&vec![41, 42, 43, 44, 45, 46, 47, 48, 49])),
+                ]),
+            ],
+            vec![
+                build_table(&vec![
+                    (ID_FIELD, u32_col(&vec![0, 1, 2, 3, 4, 5, 6, 7, 8])),
+                    (FIELD_A, i32_col(&vec![11, 12, 13, 14, 15, 16, 17, 18, 19])),
+                    (FIELD_B, i32_col(&vec![21, 22, 23, 24, 25, 26, 27, 28, 29])),
+                ]),
+                build_table(&vec![
+                    (ID_FIELD, u32_col(&vec![0, 1, 2, 3, 4, 5, 6, 7, 8])),
+                    (FIELD_A, i32_col(&vec![31, 32, 33, 34, 35, 36, 37, 38, 39])),
+                    (FIELD_B, i32_col(&vec![41, 42, 43, 44, 45, 46, 47, 48, 49])),
+                ]),
+            ],
+            vec![
+                build_table(&vec![
+                    (ID_FIELD, u64_col(&vec![0, 1, 2, 3, 4, 5, 6, 7, 8])),
+                    (FIELD_A, i32_col(&vec![11, 12, 13, 14, 15, 16, 17, 18, 19])),
+                    (FIELD_B, i32_col(&vec![21, 22, 23, 24, 25, 26, 27, 28, 29])),
+                ]),
+                build_table(&vec![
+                    (ID_FIELD, u64_col(&vec![0, 1, 2, 3, 4, 5, 6, 7, 8])),
+                    (FIELD_A, i32_col(&vec![31, 32, 33, 34, 35, 36, 37, 38, 39])),
+                    (FIELD_B, i32_col(&vec![41, 42, 43, 44, 45, 46, 47, 48, 49])),
+                ]),
+            ],
+        ];
+
+        let expected = vec![
+            "+----+----+----+",
+            "| id | a  | b  |",
+            "+----+----+----+",
+            "| 0  | 31 | 41 |",
+            "| 1  | 32 | 42 |",
+            "| 2  | 33 | 43 |",
+            "| 3  | 34 | 44 |",
+            "| 4  | 35 | 45 |",
+            "| 5  | 36 | 46 |",
+            "| 6  | 37 | 47 |",
+            "| 7  | 38 | 48 |",
+            "| 8  | 39 | 49 |",
+            "+----+----+----+",
+        ];
+
+        for test_case in test_cases {
+            let col_groups = vec![COLGROUP_PARTITIONED];
+            let columns = vec![FIELD_A, FIELD_B];
+            let sql = format!("SELECT * FROM test");
+    
+            let actual = test_runner(&col_groups.clone(), &columns, sql.as_str(), |table_store| async move {
+                append_operation(table_store.clone(), test_case[0].clone()).await.unwrap();
+                append_operation(table_store.clone(), test_case[1].clone()).await.unwrap();
+            }).await;
+
+            assert_batches_sorted_eq!(expected, &actual);
+        }
     }
 
     #[tokio::test]

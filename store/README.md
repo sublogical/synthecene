@@ -76,12 +76,12 @@ UPDATE
   * Add BinaryType to MergeSortJoin (line 1112)
   * Implement statistics() for SortMergeJoinExec
 * Schema
-  * Support more int-based IDs
   * Support string based IDs
   * Support multiple IDs
   * Sensible errors for ID failures
   * Move partitioning to use discrete values of a set of partition columns
   * Read schema from transaction log
+  * ~~Support more int-based IDs~~
   * ~~Make ID column explicit part of column-group definition~~
 * Operator API
   * Checkpoint Operator
