@@ -55,15 +55,15 @@ UPDATE
 
 ## TODO List
 * Reader API
-  * Support reading a dataset from checkpoint
   * Support reading a dataset from multiple column-groups
-  * Support time-travel reads
   * Support direct reader for Python
   * Support direct reader for Java/Scala
   * Support disaggregated reads from Rust (Ballista?)
   * Support disaggregated reads from Spark
   * Support disaggregated reads from Flink
   * Support denormalized reads
+  * ~~Support reading a dataset from checkpoint~~
+  * ~~Support time-travel reads~~
   * ~~Support reading a dataset from multiple commits~~
   * ~~Support reading a dataset from multiple partitions~~
   * ~~Integrate with DataFusion for reads~~

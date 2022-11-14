@@ -522,11 +522,63 @@ mod tests {
     use std::future::Future;
     use tempfile::tempdir;
     use crate::log::ReferencePoint;
-    use crate::operation::append::append_operation;
+    use crate::operation::append::{append_operation, append_operation_at};
     use crate::table::Table;
     use crate::test_util::*;
 
     use super::TableStore;
+
+    fn overlap_batch(idx: u8) -> RecordBatch {
+        match idx {
+            1 => build_table_i32(
+                    (ID_FIELD, &vec![0, 1, 2]),
+                    (FIELD_C,  &vec![3, 4, 5]),
+                    (FIELD_D,  &vec![4, 5, 6]),
+                ),
+            2 => build_table_i32(
+                    (ID_FIELD, &vec![0, 1, 2]),
+                    (FIELD_C,  &vec![4, 5, 6]),
+                    (FIELD_D,  &vec![7, 8, 9]),
+                ),
+            3 => build_table_i32(
+                    (ID_FIELD, &vec![0, 1, 2]),
+                    (FIELD_C,  &vec![7, 8, 9]),
+                    (FIELD_D,  &vec![1, 1, 1]),
+                ),
+            _ => panic!("unknown test case")
+        }
+    }
+
+    const OVERLAP_EXPECTED_1: &'static [&'static str] = &[
+        "+----+---+---+",
+        "| id | c | d |",
+        "+----+---+---+",
+        "| 0  | 3 | 4 |",
+        "| 1  | 4 | 5 |",
+        "| 2  | 5 | 6 |",
+        "+----+---+---+",
+    ];
+
+    const OVERLAP_EXPECTED_2: &'static [&'static str] = &[
+        "+----+---+---+",
+        "| id | c | d |",
+        "+----+---+---+",
+        "| 0  | 4 | 7 |",
+        "| 1  | 5 | 8 |",
+        "| 2  | 6 | 9 |",
+        "+----+---+---+",
+    ];
+
+    const OVERLAP_EXPECTED_3: &'static [&'static str] = &[
+        "+----+---+---+",
+        "| id | c | d |",
+        "+----+---+---+",
+        "| 0  | 7 | 1 |",
+        "| 1  | 8 | 1 |",
+        "| 2  | 9 | 1 |",
+        "+----+---+---+",
+    ];
+
 
     async fn test_runner<F, Fut>(col_groups: &Vec<&str>, fields: &Vec<&str>, sql: &str, lambda: F) -> Vec<RecordBatch> 
     where
@@ -690,48 +742,69 @@ mod tests {
     async fn test_overlapping_unpartitioned_commits() {
         let col_groups = vec![COLGROUP_UNPARTITIONED];
         let columns = vec![FIELD_C, FIELD_D];
-
-        let batch_1 = build_table_i32(
-            (ID_FIELD, &vec![0, 1, 2]),
-            (FIELD_C,  &vec![3, 4, 5]),
-            (FIELD_D,  &vec![4, 5, 6]),
-        );
-
-        let batch_2 = build_table_i32(
-            (ID_FIELD, &vec![0, 1, 2]),
-            (FIELD_C,  &vec![4, 5, 6]),
-            (FIELD_D,  &vec![7, 8, 9]),
-        );
-
-        let batch_3 = build_table_i32(
-            (ID_FIELD, &vec![0, 1, 2]),
-            (FIELD_C,  &vec![7, 8, 9]),
-            (FIELD_D,  &vec![1, 1, 1]),
-        );
-
         let sql = format!("SELECT * FROM test");
 
         let actual = test_runner(&col_groups.clone(), &columns, sql.as_str(), |table_store| async move {
-            append_operation(table_store.clone(), batch_1).await.unwrap();
-            append_operation(table_store.clone(), batch_2).await.unwrap();
-            append_operation(table_store.clone(), batch_3).await.unwrap();
+            append_operation(table_store.clone(), overlap_batch(1)).await.unwrap();
+            append_operation(table_store.clone(), overlap_batch(2)).await.unwrap();
+            append_operation(table_store.clone(), overlap_batch(3)).await.unwrap();
         }).await;
 
-        let expected = vec![
-            "+----+---+---+",
-            "| id | c | d |",
-            "+----+---+---+",
-            "| 0  | 7 | 1 |",
-            "| 1  | 8 | 1 |",
-            "| 2  | 9 | 1 |",
-            "+----+---+---+",
-        ];
-        assert_batches_sorted_eq!(expected, &actual);
+        assert_batches_sorted_eq!(OVERLAP_EXPECTED_3, &actual);
     }
 
-    // todo: test support for string IDs
-    // todo: test support for other numeric IDs
-    // todo: test support for multiple IDs
+
+    #[tokio::test]
+    async fn test_string_id_table() {
+    }
+
+    #[tokio::test]
+    async fn test_alt_numeric_id_table() {
+    }
+
+    #[tokio::test]
+    async fn test_multi_id_table() {
+    }
+ 
+    #[tokio::test]
+    async fn test_timetravel_read() {
+        let temp = tempdir().unwrap();
+        let ctx = provision_ctx(temp.path());
+
+        let col_groups = vec![COLGROUP_UNPARTITIONED];
+        let columns = vec![FIELD_C, FIELD_D];
+
+        let table_store = Arc::new(provision_store(&ctx, &col_groups).await);
+
+        let c1 = append_operation_at(table_store.clone(), 1000, overlap_batch(1)).await.unwrap();
+        let c2 = append_operation_at(table_store.clone(), 2000, overlap_batch(2)).await.unwrap();
+        let c3 = append_operation_at(table_store.clone(), 3000, overlap_batch(3)).await.unwrap();
+
+        let table_schema = make_schema(&columns);
+
+        let test_cases = vec![
+            ("head",   ReferencePoint::Mainline,                                   OVERLAP_EXPECTED_3),
+            // todo: implement ancestor reference search
+            // ("anc",    ReferencePoint::Ancestor(Box::new(ReferencePoint::Mainline), 2), OVERLAP_EXPECTED_1),
+            ("c1",     ReferencePoint::Commit(c1.commit_id),                       OVERLAP_EXPECTED_1),
+            ("c2",     ReferencePoint::Commit(c2.commit_id),                       OVERLAP_EXPECTED_2),
+            ("c3",     ReferencePoint::Commit(c3.commit_id),                       OVERLAP_EXPECTED_3),
+            ("parent", ReferencePoint::Parent(Box::new(ReferencePoint::Mainline)), OVERLAP_EXPECTED_2),
+            // todo: implement timestamp reference search
+            // ("timestamp", ReferencePoint::TimestampFrom(Box::new(ReferencePoint::Mainline), 2500), OVERLAP_EXPECTED_2)
+        ];
+
+        for (test_name, point, expected) in test_cases {
+            let table = Table::define(table_store.clone(), table_schema.clone(), point).unwrap();
+            let table_name = format!("test_{}", test_name);
+            ctx.register_table(table_name.as_str(), table).unwrap();
+
+            let sql = format!("SELECT * FROM {}", table_name);
+            let df = ctx.sql(&sql).await.unwrap();        
+            let actual: Vec<RecordBatch> = df.collect().await.unwrap();
+            assert_batches_sorted_eq!(expected, &actual);    
+        }
+    }
 
     // todo: test support for reading at a particular commit in history
 

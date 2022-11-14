@@ -22,7 +22,8 @@ pub struct AppendOperation {
     pub application: String,
     pub committer: String,
     pub commit_message: String,
-    pub batch_data: BatchData
+    pub batch_data: BatchData,
+    pub timestamp: Option<u64>
 }
 
 pub enum BatchData {
@@ -67,6 +68,10 @@ impl AppendOperation {
         self
     } 
 
+    pub fn with_timestamp(mut self, timestamp: u64) -> AppendOperation {
+        self.timestamp = Some(timestamp);
+        self
+    }
     pub fn with_commit_message(mut self, commit_message: &str) -> AppendOperation {
         self.commit_message = commit_message.to_string();
         self
@@ -107,8 +112,10 @@ impl Operation<protocol::Commit> for AppendOperation {
         let log = table_store.default_transaction_log().await?;
         let head_id = log.head_id_mainline().await?;
     
-        // todo: move to params
-        let timestamp = datetime_to_timestamp(&chrono::offset::Utc::now());
+        let timestamp = match self.timestamp {
+            Some(ts) => ts,
+            None => datetime_to_timestamp(&chrono::offset::Utc::now())
+        };
     
         let mut all_tile_files = vec![];
     
@@ -144,6 +151,14 @@ impl Operation<protocol::Commit> for AppendOperation {
 pub async fn append_operation(table_store: Arc<TableStore>, 
                               batch: RecordBatch) -> CalicoResult<protocol::Commit> { 
     AppendOperation::from_batch(batch).execute(table_store).await
+}
+
+pub async fn append_operation_at(table_store: Arc<TableStore>, 
+                                 timestamp: u64,
+                                 batch: RecordBatch) -> CalicoResult<protocol::Commit> { 
+    AppendOperation::from_batch(batch)
+        .with_timestamp(timestamp)
+        .execute(table_store).await
 }
 
 #[cfg(test)]
