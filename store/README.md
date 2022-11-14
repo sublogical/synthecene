@@ -76,15 +76,15 @@ UPDATE
   * Add BinaryType to MergeSortJoin (line 1112)
   * Implement statistics() for SortMergeJoinExec
 * Schema
-  * ~~Make ID column explicit part of column-group definition~~
   * Support more int-based IDs
   * Support string based IDs
   * Support multiple IDs
   * Sensible errors for ID failures
   * Move partitioning to use discrete values of a set of partition columns
   * Read schema from transaction log
+  * ~~Make ID column explicit part of column-group definition~~
 * Operator API
-  * ~~Move to Command Pattern~~
+  * Checkpoint Operator
   * Support streaming write
   * Refactor operator pattern for disaggregated writes
   * DDL Operations
@@ -102,6 +102,7 @@ UPDATE
   * Write with Operator
   * Direct Squash from Rust
   * Disaggregated Squash from Rust
+  * ~~Move to Command Pattern~~
   * ~~Direct Write from Rust~~
 * Transaction Log
   * Support ReferencePoint Parser

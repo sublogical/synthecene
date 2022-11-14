@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use object_store::path::Path as ObjectStorePath;
 use std::fs::File;
 use std::sync::Arc;
 
@@ -8,7 +9,6 @@ use futures::stream::{self, StreamExt };
 use parquet::arrow::arrow_writer::ArrowWriter;
 use parquet::file::properties::WriterProperties;
 
-use crate::object::object_path_for;
 use crate::protocol;
 use crate::result::CalicoResult;
 use crate::table::TableStore;
@@ -53,7 +53,7 @@ pub(crate) fn write_batch_to_bytes(batch: Arc<RecordBatch>) -> CalicoResult<Byte
 
 pub(crate) async fn write_batch(table_store: &TableStore, tile: &protocol::Tile, batch: Arc<RecordBatch>) -> CalicoResult<protocol::File> {
     let data_store = table_store.data_store_for(tile).await?;
-    let object_path = object_path_for(&tile)?;
+    let object_path: ObjectStorePath = table_store.object_path_for(&tile).try_into().unwrap();
 
     let serialized_batch = write_batch_to_bytes(batch)?;
 

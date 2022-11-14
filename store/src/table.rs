@@ -18,6 +18,7 @@ use datafusion::physical_plan::{ExecutionPlan, Statistics, PhysicalExpr};
 use datafusion::physical_plan::file_format::FileScanConfig;
 use datafusion::prelude::{Expr, JoinType, coalesce, col};
 use datafusion::scalar::ScalarValue;
+use uuid::Uuid;
 use std::collections::HashMap;
 use std::sync::Arc;
 use arrow::datatypes::{SchemaRef as ArrowSchemaRef, Schema as ArrowSchema};
@@ -137,6 +138,7 @@ async fn make_schema_for_action(object_store:&Arc<dyn ObjectStore>, action:&Tabl
     schema
 }
 
+const OBJECT_PATH: &'static str = "objects";
 
 impl TableStore {
     pub async fn new(object_store_url:ObjectStoreUrl, 
@@ -166,6 +168,17 @@ impl TableStore {
 
     pub async fn data_store_for(&self, _tile: &protocol::Tile) -> CalicoResult<Arc<dyn ObjectStore>> {
         Ok(self.object_store.clone())
+    }
+
+    pub fn object_path_for<'a>(&self, tile: &protocol::Tile) ->  String {
+        let token = Uuid::new_v4().to_string();
+        let partition = tile.partition_num;
+        format!("{}/{:08}/{}",OBJECT_PATH, partition, token)
+    }
+
+    pub fn full_object_path_for<'a>(&self, tile: &protocol::Tile) -> String {
+        let subpath = self.object_path_for(tile);
+        format!("{}/{}", self.object_store_url, subpath)
     }
 
     pub async fn log_store_for(&self, _tile: &protocol::Tile) -> CalicoResult<Arc<dyn ObjectStore>> {
