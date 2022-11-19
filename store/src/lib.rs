@@ -102,14 +102,15 @@ pub mod result {
     pub type CalicoResult<T> = Result<T, CalicoError>;
 }
 
-
-#[cfg(test)]
 pub mod test_util {
     use std::sync::Arc;
 
     use arrow::{record_batch::RecordBatch, array::*, datatypes::{Schema, DataType, Field}};
     use datafusion::{datasource::object_store::{ ObjectStoreUrl}, prelude::SessionContext};
     use object_store::{local::LocalFileSystem, ObjectStore};
+    use itertools::Itertools;
+    use rand::Rng;
+    use rand::distributions::{Alphanumeric, DistString, Standard};
 
     use crate::{table::TableStore, protocol};
 
@@ -299,5 +300,19 @@ pub mod test_util {
         RecordBatch::try_new(Arc::new(schema),table_data).unwrap()
     }
 
+    pub fn big_str_col(string_size:usize, num_strings:usize) -> Vec<String>{
+        (1..num_strings).map(|_| {
+            Alphanumeric.sample_string(&mut rand::thread_rng(), string_size)
+        }).collect_vec()
+    }
+    
+    pub fn big_col<T>(num:usize) -> Vec<T> 
+        where Standard: rand::distributions::Distribution<T>
+    {
+        let mut rng = rand::thread_rng();
+        (1..num).map(|_| {
+            rng.gen()
+        }).collect_vec()
+    }    
 }
 

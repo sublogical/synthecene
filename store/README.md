@@ -54,6 +54,23 @@ UPDATE
 
 
 ## TODO List
+* Benchmark Test Tool
+  * LocalFile object store
+  * Configurable columns
+  * Configurable column groups
+  * Configurable partitioning
+  * Configurable ID columns
+  * Combined benchmark (append + checkpoint + query)
+  * Noop operation support (no row commits - transaction log only)
+  * Flamegraph support
+  * Emit file output metrics
+  * Checkpoint operations
+  * S3 object store
+  * TmpFile LocalFile object store
+  * ~~Emit stdout metrics~~
+  * ~~Data generator~~
+  * ~~Append operations~~
+  * ~~Table query~~
 * Reader API
   * Support reading a dataset from multiple column-groups
   * Support direct reader for Python
@@ -115,15 +132,6 @@ UPDATE
   * ~~Support branch labels (e.g. mainline)~~
   * ~~Support operations with set of parquet files + update expression~~
   * ~~Support parallel checkpoint operations~~
-* Benchmark
-  * Transaction Log
-    * Commit Speed
-    * Lookup Speed
-  * Operations
-    * Append
-    * Checkpoint
-  * Data Generator
-  * Reader
 * CLI
   * Create Table
   * Add Column-Group
