@@ -1,0 +1,10 @@
+name: calico
+channels:
+  - nvidia
+  - pytorch
+dependencies:
+  - python=3.9
+  - pytorch
+  - pytorch-cuda=11.6
+  - torchvision
+  - torchaudio
