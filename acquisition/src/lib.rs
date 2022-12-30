@@ -3,6 +3,7 @@ pub mod result {
 
     #[derive(Debug)]
     pub enum IndigoError {
+        RobotForbidden,
         ReqwestError(reqwest::Error)
     }
 
@@ -15,7 +16,7 @@ pub mod result {
         fn source(&self) -> Option<&(dyn Error + 'static)> {
             match *self {
                 Self::ReqwestError(ref e) => Some(e),
-//                _ => None
+                _ => None
             }
         }
     }
