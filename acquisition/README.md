@@ -1,4 +1,22 @@
+```
+sudo apt-install libssl-dev
 
+
+# TODO:
+* state
+  * proto definitions
+  * link
+  * frontier
+  * crawl task
+
+* task
+  * local frontier
+  * rate limiter
+* crawler object
+  * support basic fetch
+  * extract urls
+  * support robots.txt
+  * sitemaps support
 
 
 
