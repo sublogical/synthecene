@@ -1,23 +1,62 @@
+use std::{time::{SystemTime, Instant, UNIX_EPOCH}, path::Path};
+
 use acquisition::result::{IndigoResult, IndigoError};
 use reqwest;
 use robotstxt::DefaultMatcher;
-use rand::{thread_rng, Rng};
-use rand::distributions::Alphanumeric;
 use scraper::{Html, Selector};
 
+use self::frontier::{LastVisitStore, FrontierStore};
+
+pub mod controller;
+pub mod smarts;
+pub mod frontier;
+pub mod task;
 
 #[derive(Clone, Debug, Default)]
 pub struct Host {
-    scheme: String,
+    /// Optionally specify a non-default scheme (defaults to 'https')
+    scheme: Option<String>,
+
+    /// FQDN for the fetch
     hostname: String,
-    port: u16
+
+    /// Optionally specify a non-default port
+    port: Option<u16>
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct Capture {
-    body: String
+impl Host {
+    fn full_url(&self, relative_url: &String) -> String{
+        let scheme = match &self.scheme {
+            Some(scheme) => scheme.clone(),
+            None => "https".to_string()
+        };
+
+        match self.port {
+            Some(port) => format!("{}://{}:{}{}", scheme, self.hostname, port, relative_url),
+            None => format!("{}//{}{}", scheme, self.hostname, relative_url),
+        }
+    }
 }
 #[derive(Clone, Debug, Default)]
+pub struct Capture {
+    // raw HTML body of page
+    body: String,
+
+    /// Time the fetch was started, in ms since epoch
+    fetched_at: u64,
+
+    /// Time the fetch took to return, in ms
+    fetch_time: u64,
+
+    /// Content-length in bytes
+    content_length: u64,
+
+    status: u16,
+
+    /// Unique list of links on the page, unscored, sorted by first appearance
+    outlinks: Vec<String>
+}
+
 
 struct DomainState {
     host: Host,
@@ -27,22 +66,23 @@ struct DomainState {
 }
 
 impl DomainState {
-    async fn for_domain(host: &Host) -> IndigoResult<DomainState> {
-        let url = format!("{}://{}:{}/robots.txt", host.scheme, host.hostname, host.port);
-        let robots_capture = inner_retrieve(url).await?;
+    async fn for_domain(host: &Host, fetch_rate_ms: u64) -> IndigoResult<DomainState> {
+        let url = host.full_url(&"/robots.txt".to_string());
+        let robots = inner_retrieve(url).await.map(|robots_capture| robots_capture.body).ok();
 
         Ok(DomainState {
             host: host.clone(),
-            robots: Some(robots_capture.body),
+            robots,
             ms_since_last_fetch: 0,
-            fetch_rate_ms: 0
+            fetch_rate_ms
         })
     }
+
 }
 
 const INDIGO_USER_AGENT: &str = r"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/600.2.5 (KHTML\, like Gecko) Version/8.0.2 Safari/600.2.5 (Panubot/0.1; +https://developer.panulirus.com/support/panubot)";
 
-async fn retrieve(state: DomainState, url: String) -> IndigoResult<(Capture, DomainState)> {
+async fn retrieve(state: &mut DomainState, url: String) -> IndigoResult<Capture> {
     // Step 1. Determine whether we're allowed to crawl this site
     match &state.robots {
         Some(robots_txt) => {
@@ -53,21 +93,40 @@ async fn retrieve(state: DomainState, url: String) -> IndigoResult<(Capture, Dom
         },
         None => {}
     }
-    Ok((inner_retrieve(url).await?, state))
+    Ok(inner_retrieve(url).await?)
 }
 
 async fn inner_retrieve(url: String) -> IndigoResult<Capture> {
-    let resp = reqwest::get(url).await?;
-    let body = resp.text().await?;
-    
-    let capture = Capture {
-        body
-    };
+    let fetched_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Should always be able to get time since EPOCH")
+        .as_millis()
+        .try_into()
+        .expect("It's ok if this code stops working in 584M years, really");
 
-    Ok(capture)
+    let start = Instant::now();
+    let resp = reqwest::get(url).await?;
+    let content_length = resp.content_length();
+    let status = resp.status().as_u16();
+    
+    let body = resp.text().await?;
+    let content_length = content_length.unwrap_or(body.len().try_into()
+        .expect("Should never take more than 584M years to request a web page"));
+
+    let fetch_time = start.elapsed().as_millis().try_into().unwrap();
+    let outlinks = extract_links(&body);
+
+    Ok(Capture {
+        body,
+        fetch_time,
+        content_length,
+        status,
+        outlinks,
+        fetched_at
+    })
 }
 
-fn extract_links(text: String) -> Vec<String> {
+fn extract_links(text: &String) -> Vec<String> {
     let document = Html::parse_document(&text);
     let selector = Selector::parse(r#"a"#).unwrap();
 
@@ -81,26 +140,29 @@ fn extract_links(text: String) -> Vec<String> {
 
 
 #[cfg(test)]
-use mockito;
-
 mod tests {
     use std::{path::PathBuf, time::{Instant, Duration}};
 
+    use mockito;
     use mockito::{mock, Mock, Matcher};
+    use rand::{thread_rng, Rng};
+    use rand::distributions::Alphanumeric;
+    use tempfile::tempdir;
 
     use crate::fetch::*;
 
-    fn mockito_host() -> Host{
+    pub fn mockito_host() -> Host{
         let address = mockito::server_address();
 
         Host {
-            scheme: "http".to_string(),
+            scheme: Some("http".to_string()),
             hostname: address.ip().to_string(),
-            port: address.port()
+            port: Some(address.port()),
+            ..Default::default()
         }
     }
 
-    fn with_friendly_robots() -> Mock {
+    pub fn with_friendly_robots() -> Mock {
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         d.push("resources/test/yes_robots.txt");
         mock("GET", "/robots.txt")
@@ -109,7 +171,7 @@ mod tests {
             .create()
     }
 
-    fn with_unfriendly_robots() -> Mock {
+    pub fn with_unfriendly_robots() -> Mock {
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         d.push("resources/test/no_robots.txt");
         mock("GET", "/robots.txt")
@@ -118,14 +180,14 @@ mod tests {
             .create()
     }
 
-    fn with_text(path: &str, body: &str) -> Mock {
+    pub fn with_text(path: &str, body: &str) -> Mock {
         mock("GET", path)
             .with_status(200)
             .with_body(body)
             .create()
     }
 
-    fn with_spider_trap() -> Mock {
+    pub fn with_spider_trap() -> Mock {
         mock("GET", Matcher::Regex(r"^/req/.*$".to_string()))
             .with_status(200)
             .with_body("FARM")
@@ -141,7 +203,7 @@ mod tests {
             .create()
     }
 
-    fn url(path: &str) -> String{
+    pub fn url(path: &str) -> String{
         let host = &mockito::server_url();
         let url = format!("{}{}", host, path);
         url
@@ -171,8 +233,8 @@ mod tests {
             with_text("/hello", "world")
         ];
 
-        let state = DomainState::for_domain(&mockito_host()).await.unwrap();
-        let (capture, _state) = retrieve(state, url("/hello")).await.unwrap();
+        let mut state = DomainState::for_domain(&mockito_host(), 0).await.unwrap();
+        let capture = retrieve(&mut state, url("/hello")).await.unwrap();
         assert_eq!(capture.body, "world");
     }
     #[tokio::test]
@@ -182,8 +244,8 @@ mod tests {
             with_text("/hello", "world")
         ];
 
-        let state = DomainState::for_domain(&mockito_host()).await.unwrap();
-        let res = retrieve(state, url("/hello")).await;
+        let mut state = DomainState::for_domain(&mockito_host(), 0).await.unwrap();
+        let res = retrieve(&mut state, url("/hello")).await;
         assert!(matches!(res, Err(IndigoError::RobotForbidden)));
     }
     #[tokio::test]
@@ -193,16 +255,15 @@ mod tests {
             with_spider_trap()
         ];
 
-        let mut state = DomainState::for_domain(&mockito_host()).await.unwrap();
+        let mut state = DomainState::for_domain(&mockito_host(), 0).await.unwrap();
 
         let now = Instant::now();
 
         let mut path = "/req/abc".to_string();
         for _ in 1..101 {
-            let (capture, new_state) = retrieve(state, url(&path)).await.unwrap();
-            let links = extract_links(capture.body);
-            path = links[0].clone();
-            state = new_state;
+            let capture = retrieve(&mut state, url(&path)).await.unwrap();
+        
+            path = capture.outlinks[0].clone();
         }
         let elapsed = now.elapsed();
         assert!(elapsed < Duration::from_secs(5))

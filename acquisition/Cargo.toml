@@ -12,11 +12,19 @@ name = "crawler"
 path = "src/crawler.rs"
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+async-stream = "0.3"
+clap = { version = "4.0", features = ["derive"] }
+kv = "0.24"
+futures = "0.3"
+futures-util = "0.3"
 rand = "0.8"
 reqwest = "0.11"
 robotstxt = "0.3"
 scraper = "0.14"
+tokio = { version = "1", features = ["full"] }
+yaque = "0.6"
 
 [dev-dependencies]
+tempfile = "3.3"
 mockito = "0.31"
