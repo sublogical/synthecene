@@ -1,10 +1,11 @@
 use std::mem::replace;
 use std::time::Duration;
 
+use acquisition::protocol;
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
 
-use crate::fetch::{frontier::{FrontierStore, LastVisitStore}, task::DeepCrawlTask, Host};
+use crate::fetch::task::DeepCrawlTask;
 
 use super::task::Task;
 
@@ -47,7 +48,7 @@ pub fn parse_cli_controller() -> Box<dyn Controller> {
             use_sitemap
         } => {
             println!("'deep' was used, domain is: {:?}", domain);
-            let host = Host {
+            let host = protocol::Host {
                 hostname: domain.to_string(),
                 ..Default::default()
             };
@@ -63,7 +64,7 @@ pub fn parse_cli_controller() -> Box<dyn Controller> {
 
             Box::new(OneTimeUse::init(task))
         }
-        Commands::WideCrawl { seed } => todo!(),
+        _ => todo!(),
     }
 }
 
@@ -97,9 +98,6 @@ impl Controller for OneTimeUse<Box<dyn Task + Send>> {
 
 
 #[cfg(test)]
-use mockito;
-
-#[cfg(test)]
 mod tests {
     use super::OneTimeUse;
 
@@ -109,7 +107,7 @@ mod tests {
         assert_eq!(o.next(), Some(1));
         assert_eq!(o.next(), None);
 
-        let mut o = OneTimeUse::init(1);
+        let o = OneTimeUse::init(1);
         let v:Vec<u32> = o.collect();
         assert_eq!(v, vec![1]);
     }

@@ -5,6 +5,7 @@ members = [
     "annotate",
     "index",
     "model",
+    "shared",
     "signal",
     "sim",
     "store",

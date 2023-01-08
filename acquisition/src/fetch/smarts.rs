@@ -1,4 +1,4 @@
-use super::Host;
+use acquisition::protocol;
 
 enum _PriorityBin {
     Urgent,
@@ -13,5 +13,5 @@ struct _Priority {
 }
 
 trait FetchSmarts {
-    fn url_priority(host: Host, url: String) -> _Priority;
+    fn url_priority(host: protocol::Host, url: String) -> _Priority;
 }

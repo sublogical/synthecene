@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package indigo.protocol;
+
+message LastVisit {
+    uint64 added_to_frontier = 1;
+    optional uint64 fetched = 2;
+    optional uint32 status_code = 3;
+}
+
+message Host {
+    /// Optionally specify a non-default scheme (defaults to 'https')
+    optional string scheme = 1;
+
+    /// FQDN for the fetch
+    string hostname = 2;
+
+    optional uint32 port = 3;
+}

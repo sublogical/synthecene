@@ -1,11 +1,9 @@
 use std::fmt;
-use std::ptr::null;
 use std::sync::Arc;
 
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use datafusion::physical_plan::{DisplayFormatType, SendableRecordBatchStream};
-use datafusion::physical_plan::metrics::MetricsSet;
+use datafusion::physical_plan::{SendableRecordBatchStream};
 
 use crate::datatypes::datetime_to_timestamp;
 use crate::log::MAINLINE;
@@ -13,7 +11,7 @@ use crate::table::TableStore;
 use crate::protocol;
 use crate::writer::write_batches;
 use crate::partition::split_batch;
-use crate::result::CalicoResult;
+use calico_shared::result::CalicoResult;
 
 use super::Operation;
 
@@ -36,7 +34,7 @@ impl fmt::Debug for BatchData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             BatchData::None => write!(f, "None"),
-            BatchData::Stream(s) => write!(f, "RecordBatchStream"),
+            BatchData::Stream(_) => write!(f, "RecordBatchStream"),
             BatchData::List(v) => write!(f, "RecordBatchList({:?})", v.len())
         }
     }
@@ -143,7 +141,7 @@ impl Operation<protocol::Commit> for AppendOperation {
         Ok(commit.commit)
     }
 
-    async fn abort(&mut self, table_store: Arc<TableStore>) -> CalicoResult<()> {
+    async fn abort(&mut self, _table_store: Arc<TableStore>) -> CalicoResult<()> {
         todo!()
     }
 }

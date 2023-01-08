@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-lib = "aqlib"
+lib = "acquisition_lib"
 path = "src/lib.rs"
 
 [[bin]]
@@ -12,19 +12,33 @@ name = "crawler"
 path = "src/crawler.rs"
 
 [dependencies]
+store = { path = "../store" }
+calico-shared = { path = "../shared" }
+
 async-trait = "0.1"
 async-stream = "0.3"
 clap = { version = "4.0", features = ["derive"] }
 kv = "0.24"
 futures = "0.3"
 futures-util = "0.3"
+itertools = "0.10"
+num = "0.4"
+object_store = "0.5.1"
+prost = "0.11.0"
+prost-types = "0.11.0"
 rand = "0.8"
 reqwest = "0.11"
 robotstxt = "0.3"
 scraper = "0.14"
+tempfile = "3.3"
 tokio = { version = "1", features = ["full"] }
+uuid = "1.2"
 yaque = "0.6"
 
+
 [dev-dependencies]
-tempfile = "3.3"
+fs_extra = "1.2.0"
 mockito = "0.31"
+
+[build-dependencies]
+prost-build = "0.11.0"

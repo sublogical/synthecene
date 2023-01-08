@@ -55,9 +55,8 @@ UPDATE
 
 ## TODO List
 * Benchmark Test Tool
-  * LocalFile object store
-  * Configurable columns
-  * Configurable column groups
+  * Write only benchmark
+  * Transaction only benchmark
   * Configurable partitioning
   * Configurable ID columns
   * Combined benchmark (append + checkpoint + query)
@@ -66,7 +65,10 @@ UPDATE
   * Emit file output metrics
   * Checkpoint operations
   * S3 object store
-  * TmpFile LocalFile object store
+  * ~~Configurable LocalFile object store~~
+  * ~~Configurable columns~~
+  * ~~Configurable column groups~~
+  * ~~TmpFile LocalFile object store~~
   * ~~Emit stdout metrics~~
   * ~~Data generator~~
   * ~~Append operations~~

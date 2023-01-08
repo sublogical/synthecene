@@ -3,11 +3,17 @@ sudo apt-install libssl-dev
 ```
 
 ### TODO: Crawler
-* task state
-  * track frontier
-  * track last-visit map
-  * download task state from object store
-  * send task state update to object store
+* frontier
+  * ~~implement disk back frontier~~
+  * ~~benchmark frontier~~
+  * support tiered frontiers
+  * support downloading existing frontier at start of task
+  * support periodic frontier checkpoints in object store
+* last visit map
+  * ~~implement disk backed last visit kv store~~
+  * ~~benchmark last visit map~~
+  * support downloading existing last visit map at start of task
+  * support periodic last visit map checkpoints in object store
 * fetch object
   * ~~support basic fetch~~
   * ~~extract urls~~
@@ -16,31 +22,45 @@ sudo apt-install libssl-dev
   * enforce fetch rate
   * support parallel single host fetch
 * schema
-  * proto definitions
+  * ~~support proto definitions~~
   * link
-  * capture
-  * host
-  * frontier
-  * last-visit
+  * capture to proto
+  * host to proto?
 * domain state
-  * track fetch telemetry
   * track fetch rate
   * send domain state to object store
 * capture state
   * send page batch to object store
   * send page batch notification to object store
   * send page to kafka
-* task
-  * get task from planner
+* deep crawl task
+  * ~~build domain frontier~~
+  * ~~build domain last visit map~~
+  * ~~track frontier in crawl task~~
+  * ~~iterative crawl URLs from frontier~~
+  * ~~add outlinks to frontier~~
+  * ~~dedupe outlinks on page~~
+  * ~~track last-visit map in crawl task~~
+  * ~~dedupe outlinks against last-visit map~~
+  * ~~track fetch telemetry - latency~~
+  * ~~track fetch telemetry - size~~
+  * ~~track fetch telemetry - outlinks~~
+  * track fetch telemetry - status distribution
+* telemetry
+  * ~~exponential decay~~
+  * ~~summation~~
+  * ~~max~~
+  * ~~min~~
+  * distribution
+* refresh crawl task
+  * time sensitive sitemap crawl
+* wide crawl task
+  * download domain seeds
+  * start sub-tasks for each domain    
+* controller
+  * single-task
+  * local controller
   * support sub-tasks O(1M)
-  * implement recipe components
-    * crawl sitemap
-    * crawl from seed list
-  * implement deep crawl task
-  * implement refresh crawl task
-  * implement wide-crawl task
-    * download domain seeds
-    * start sub-tasks for each domain    
 * planner
   * scheduled tasks
   * task SLO

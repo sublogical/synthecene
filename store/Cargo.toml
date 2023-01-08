@@ -22,6 +22,8 @@ name = "store-kafka-connector"
 path = "src/kafka_connector.rs"
 
 [dependencies]
+calico-shared = { path = "../shared" }
+
 itertools = "0.7.4"
 arrow = "24.0"
 async-trait = "0.1"
@@ -30,21 +32,26 @@ bytes = "1.2.1"
 chrono = "0.4"
 clap = { version = "4.0", features = ["derive"] }
 datafusion = { version = "13.0.0" }
+flate2 = "1.0"
 futures = "0.3"
 hex = "0.4"
 log = "0.4.17"
 maplit = "1.0.2"
-object_store = "0.5.1"
+object_store = "0.5"
 parquet = "24.0.0"
 pretty-bytes = "0.2"
 prost = "0.11.0"
 prost-types = "0.11.0"
 rand = "0.8.5"
+tar = "0.4"
 tempfile = "3.2.0"
 tokio = { version = "1", features = ["full"] }
 uuid = "1.2"
+url = "2.3"
 
 [dev-dependencies]
+fs_extra = "1.2"
+lipsum = "0.8"
 
 [build-dependencies]
 prost-build = "0.11.0"

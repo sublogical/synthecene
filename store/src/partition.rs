@@ -11,7 +11,7 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::sync::Arc;
 
-use crate::result::{CalicoResult, CalicoError};
+use calico_shared::result::{CalicoResult, CalicoError};
 use crate::protocol;
 use crate::table::TableStore;
 

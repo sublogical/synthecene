@@ -10,7 +10,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use crate::protocol;
-use crate::result::{CalicoResult, CalicoError};
+use calico_shared::result::{CalicoResult, CalicoError};
 
 type BranchRef<'a> = &'a str;
 pub const MAINLINE: &str = "mainline";
@@ -565,7 +565,7 @@ mod tests {
 
     use crate::log::{TransactionLog, Commit };
     use crate::protocol;
-    use crate::result::CalicoResult;
+    use calico_shared::result::CalicoResult;
 
     use super::MAINLINE;
 

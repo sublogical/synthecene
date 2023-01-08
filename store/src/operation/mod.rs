@@ -7,7 +7,7 @@ use datafusion::physical_plan::DisplayFormatType;
 use datafusion::physical_plan::metrics::MetricsSet;
 
 use crate::table::TableStore;
-use crate::result::CalicoResult;
+use calico_shared::result::CalicoResult;
 
 pub mod append;
 

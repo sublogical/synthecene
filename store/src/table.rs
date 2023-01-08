@@ -30,7 +30,7 @@ use object_store::path::Path as ObjectStorePath;
 use crate::datatypes::timestamp_to_datetime;
 use crate::log::{TransactionLog, ReferencePoint, TableAction};
 use crate::protocol;
-use crate::result::{CalicoResult, CalicoError};
+use calico_shared::result::{CalicoResult, CalicoError};
 
 // todo: convert this to calico-specific schema objects to allow for protobuf types & column metadata
 type Schema = ArrowSchema;
@@ -61,12 +61,6 @@ impl From<&protocol::File> for ObjectMeta {
             last_modified,
             size: file.file_size as usize,
         }
-    }
-}
-
-impl From<CalicoError> for DataFusionError {
-    fn from(err: CalicoError) -> Self {
-        DataFusionError::External(Box::new(err))
     }
 }
 

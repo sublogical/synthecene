@@ -1,42 +1,29 @@
-use std::{time::{SystemTime, Instant, UNIX_EPOCH}, path::Path};
+use std::time::{SystemTime, Instant, UNIX_EPOCH};
 
-use acquisition::result::{IndigoResult, IndigoError};
+use calico_shared::result::{CalicoResult, CalicoError};
+use acquisition::protocol;
 use reqwest;
 use robotstxt::DefaultMatcher;
 use scraper::{Html, Selector};
-
-use self::frontier::{LastVisitStore, FrontierStore};
 
 pub mod controller;
 pub mod smarts;
 pub mod frontier;
 pub mod task;
 
-#[derive(Clone, Debug, Default)]
-pub struct Host {
-    /// Optionally specify a non-default scheme (defaults to 'https')
-    scheme: Option<String>,
+fn full_url(host: &protocol::Host, relative_url: &String) -> String{
 
-    /// FQDN for the fetch
-    hostname: String,
+    let scheme = match &host.scheme {
+        Some(scheme) => scheme.clone(),
+        None => "https".to_string()
+    };
 
-    /// Optionally specify a non-default port
-    port: Option<u16>
-}
-
-impl Host {
-    fn full_url(&self, relative_url: &String) -> String{
-        let scheme = match &self.scheme {
-            Some(scheme) => scheme.clone(),
-            None => "https".to_string()
-        };
-
-        match self.port {
-            Some(port) => format!("{}://{}:{}{}", scheme, self.hostname, port, relative_url),
-            None => format!("{}//{}{}", scheme, self.hostname, relative_url),
-        }
+    match host.port {
+        Some(port) => format!("{}://{}:{}{}", scheme, host.hostname, port, relative_url),
+        None => format!("{}//{}{}", scheme, host.hostname, relative_url),
     }
 }
+
 #[derive(Clone, Debug, Default)]
 pub struct Capture {
     // raw HTML body of page
@@ -59,15 +46,15 @@ pub struct Capture {
 
 
 struct DomainState {
-    host: Host,
+    host: protocol::Host,
     robots: Option<String>,
     ms_since_last_fetch: u64,
     fetch_rate_ms: u64
 }
 
 impl DomainState {
-    async fn for_domain(host: &Host, fetch_rate_ms: u64) -> IndigoResult<DomainState> {
-        let url = host.full_url(&"/robots.txt".to_string());
+    async fn for_domain(host: &protocol::Host, fetch_rate_ms: u64) -> CalicoResult<DomainState> {
+        let url = full_url(host, &"/robots.txt".to_string());
         let robots = inner_retrieve(url).await.map(|robots_capture| robots_capture.body).ok();
 
         Ok(DomainState {
@@ -82,13 +69,13 @@ impl DomainState {
 
 const INDIGO_USER_AGENT: &str = r"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/600.2.5 (KHTML\, like Gecko) Version/8.0.2 Safari/600.2.5 (Panubot/0.1; +https://developer.panulirus.com/support/panubot)";
 
-async fn retrieve(state: &mut DomainState, url: String) -> IndigoResult<Capture> {
+async fn retrieve(state: &mut DomainState, url: String) -> CalicoResult<Capture> {
     // Step 1. Determine whether we're allowed to crawl this site
     match &state.robots {
         Some(robots_txt) => {
             let mut matcher = DefaultMatcher::default();
             if !matcher.one_agent_allowed_by_robots(robots_txt, INDIGO_USER_AGENT, &url) {
-                return Err(IndigoError::RobotForbidden)
+                return Err(CalicoError::RobotForbidden)
             }
         },
         None => {}
@@ -96,7 +83,7 @@ async fn retrieve(state: &mut DomainState, url: String) -> IndigoResult<Capture>
     Ok(inner_retrieve(url).await?)
 }
 
-async fn inner_retrieve(url: String) -> IndigoResult<Capture> {
+async fn inner_retrieve(url: String) -> CalicoResult<Capture> {
     let fetched_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("Should always be able to get time since EPOCH")
@@ -147,17 +134,16 @@ mod tests {
     use mockito::{mock, Mock, Matcher};
     use rand::{thread_rng, Rng};
     use rand::distributions::Alphanumeric;
-    use tempfile::tempdir;
 
     use crate::fetch::*;
 
-    pub fn mockito_host() -> Host{
+    pub fn mockito_host() -> protocol::Host{
         let address = mockito::server_address();
 
-        Host {
+        protocol::Host {
             scheme: Some("http".to_string()),
             hostname: address.ip().to_string(),
-            port: Some(address.port()),
+            port: Some(address.port() as u32),
             ..Default::default()
         }
     }
@@ -246,7 +232,7 @@ mod tests {
 
         let mut state = DomainState::for_domain(&mockito_host(), 0).await.unwrap();
         let res = retrieve(&mut state, url("/hello")).await;
-        assert!(matches!(res, Err(IndigoError::RobotForbidden)));
+        assert!(matches!(res, Err(CalicoError::RobotForbidden)));
     }
     #[tokio::test]
     async fn test_link_farm() {

@@ -1,10 +1,11 @@
-use acquisition::result::IndigoResult;
+use calico_shared::result::CalicoResult;
 use fetch::controller::parse_cli_controller;
 
 mod fetch;
+mod telemetry;
 
 #[tokio::main]
-async fn main() -> IndigoResult<()> {
+async fn main() -> CalicoResult<()> {
     let mut controller = parse_cli_controller();
 
     // Simple single thread task loop

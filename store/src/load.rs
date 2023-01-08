@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use arrow::array::Array;
 use arrow::record_batch::RecordBatch;
+use calico_shared::result::CalicoResult;
 use clap::{Parser, Args, Subcommand};
 use datafusion::datasource::object_store::ObjectStoreUrl;
 use datafusion::prelude::SessionContext;
@@ -11,12 +12,12 @@ use object_store::local::LocalFileSystem;
 use object_store::path::Path as ObjectStorePath;
 use pretty_bytes::converter::convert;
 use storelib::log::ReferencePoint;
-use storelib::result::CalicoResult;
 use storelib::table::{Table, OBJECT_PATH, TableStore};
 use storelib::{test_util::*, protocol};
 use storelib::operation::append::append_operation;
 use tempfile::{tempdir};
 use tokio::time::Instant;
+use url::Url;
 
 async fn get_object_store_size(object_store: &Arc<dyn ObjectStore>) -> u64 {
     let prefix: ObjectStorePath = OBJECT_PATH.try_into().unwrap();
@@ -131,6 +132,9 @@ struct AppendArgs {
     #[arg(long, default_value_t = 100)]
     string_size: usize,
 
+   /// Skip the read at the end
+   #[arg(long, default_value_t = false)]
+   skip_read: bool,
 }
 #[derive(Subcommand, Debug)]
 enum Command {
@@ -153,8 +157,25 @@ impl LoadGenArgs {
 
     fn initialize_object_store(&self, ctx: &SessionContext, path: &std::path::Path) -> CalicoResult<Arc<dyn ObjectStore>> {
         let object_store = match &self.object {
-            Some(path) => todo!(),
-            None => Arc::new(LocalFileSystem::new_with_prefix(path).unwrap())
+            Some(path) => match Url::parse(path) {
+                Ok(url) => match url.scheme() {
+                    "file" => {
+                        let path = url.path();
+                        println!("Using LocalFile at: {}", path);
+                        Arc::new(LocalFileSystem::new_with_prefix(path).unwrap())
+                    }
+                    "s3" => todo!("support S3"),
+                    scheme => panic!("Unknown object scheme {}", scheme)
+                },
+                Err(_) => {
+                    println!("Using LocalFile at: {}", path);
+                    Arc::new(LocalFileSystem::new_with_prefix(path).unwrap())
+                },
+            },
+            None => {
+                println!("Using LocalFile(TMP) at: {}", path.to_str().unwrap());
+                Arc::new(LocalFileSystem::new_with_prefix(path).unwrap())
+            }
         };
 
         // todo: support loading whatever object store
@@ -204,7 +225,7 @@ async fn append_loadgen(task: &AppendArgs, ctx: &SessionContext, table_store: Ar
     let start = Instant::now();
 
     // todo: support multiple workers
-    for i in 1..task.num_commits {
+    for _ in 0..task.num_commits {
         run_append_load(table_store.clone(), task.num_rows, task.string_size, &columns, ids.clone()).await.unwrap();
     }
 
@@ -221,10 +242,12 @@ async fn append_loadgen(task: &AppendArgs, ctx: &SessionContext, table_store: Ar
         convert(delta_size as f64),
         convert(delta_size as f64 /  duration.as_secs_f64()));
 
-    let start = Instant::now();
-    perform_query(table_store.clone(), &ctx, &columns).await.unwrap();
-    let duration = start.elapsed();
-    println!("Completed query in: {:?}", duration);
+    if !task.skip_read {
+        let start = Instant::now();
+        perform_query(table_store.clone(), &ctx, &columns).await.unwrap();
+        let duration = start.elapsed();
+        println!("Completed query in: {:?}", duration);
+    }
 
     // todo: output stats
     Ok(())
