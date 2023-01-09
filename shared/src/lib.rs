@@ -11,6 +11,7 @@ pub mod result {
     #[derive(Debug)]
     pub enum CalicoError {
         RobotForbidden,
+        ImproperCheckpointCommit(String),
 
         ArrowMessedUp(ArrowError),
         BranchNotFound(String),
@@ -121,6 +122,11 @@ pub mod result {
 
 }
 
+pub mod applications {
+    pub const CRAWLER:&str = "calico:acquisition:crawler:0";
+}
+
+pub mod types;
 
 #[cfg(test)]
 mod tests {

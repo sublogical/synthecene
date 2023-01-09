@@ -42,7 +42,7 @@ message TileFiles {
 }
 enum FileType {
     Data = 0;
-    Metadata = 1;
+    Blob = 1;
 }
 
 message File {

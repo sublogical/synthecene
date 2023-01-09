@@ -1,8 +1,9 @@
-use std::{path::Path, time::{Instant, UNIX_EPOCH, SystemTime} };
+use std::{path::Path, time::{Instant, UNIX_EPOCH, SystemTime}, sync::Arc };
 
 use calico_shared::result::CalicoResult;
 use async_trait::async_trait;
 use itertools::Itertools;
+use object_store::ObjectStore;
 
 use crate::fetch::{retrieve};
 use acquisition::protocol;
@@ -12,7 +13,7 @@ use crate::telemetry;
 
 #[async_trait]
 pub trait Task {
-    async fn run(&mut self) -> CalicoResult<TaskReport>;
+    async fn run(&mut self, object_store: Arc<dyn ObjectStore>) -> CalicoResult<TaskReport>;
 }
 
 /// Frontier task uses a queue & prioritization function to recursively crawl a domain.
@@ -80,14 +81,23 @@ impl CrawlTelementry {
 
 #[async_trait]
 impl Task for DeepCrawlTask {
-    async fn run(&mut self) -> CalicoResult<TaskReport> {
+    async fn run(&mut self, object_store: Arc<dyn ObjectStore>) -> CalicoResult<TaskReport> {
         let mut pages_fetched = 0;
+
+        // TODO: move crawler state for a configured local manifest
         let path = Path::new("/tmp/.crawler_state");
         let mut domain_state = DomainState::for_domain(&self.domain, self.fetch_rate_ms).await?;
         let now = Instant::now();
-        
+
+        // TODO: move crawler state layout to a configured local manifest
         let frontier_path = path.join(&self.domain.hostname).join("frontier");
-        let mut frontier = FrontierStore::init_local(&frontier_path);
+
+        // TODO: move remote object layout to a configured remote manifest
+        let remote_object_path = "frontier".to_string();
+
+        let mut frontier = FrontierStore::init_local(object_store,
+            &remote_object_path,
+            &frontier_path.to_str().expect("unable to convert path to string").to_string()).await?;
 
         let last_visit_path = path.join(&self.domain.hostname).join("last_visit");
         let mut last_visit = LastVisitStore::init_local(&last_visit_path)?;
@@ -164,6 +174,12 @@ impl Task for DeepCrawlTask {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use object_store::ObjectStore;
+    use object_store::local::LocalFileSystem;
+    use tempfile::tempdir;
+
     use super::super::tests::*;
 
     use super::{DeepCrawlTask, Task};
@@ -184,7 +200,10 @@ mod tests {
             seed_list: vec!["/req/abc".to_string()]
         };
 
-        let report = task.run().await.expect("Shouldn't fail");
+        let temp_dir = tempdir().unwrap();
+        let object_store:Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
+        let report = task.run(object_store).await.expect("Shouldn't fail");
 
         println!("Report: {:?}", report);
         assert_eq!(report.pages_fetched, 100);
@@ -192,6 +211,7 @@ mod tests {
         assert!(report.avg_size > 0.);
         assert!(report.max_size > 0.);
     }
+
     #[tokio::test]
     async fn test_basic_deep_crawl_timer_stop() {
         let _m = [
@@ -208,7 +228,10 @@ mod tests {
             seed_list: vec!["/req/abc".to_string()]
         };
 
-        let report = task.run().await.expect("Shouldn't fail");
+        let temp_dir = tempdir().unwrap();
+        let object_store:Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
+        let report = task.run(object_store).await.expect("Shouldn't fail");
 
         assert!(report.pages_fetched < 1000);
     }

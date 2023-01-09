@@ -215,22 +215,28 @@ pub struct TransactionLog {
 
 impl TransactionLog {
     pub async fn init(object_store: Arc<dyn ObjectStore>) -> CalicoResult<TransactionLog> {
-        let log = TransactionLog{ object_store };
+        let log = TransactionLog{ 
+            object_store,
+        };
 
         log.init_dir(Self::REF_DIR).await?;
         log.init_dir(Self::TMP_DIR).await?;
         log.init_dir(Self::COMMIT_DIR).await?;
         log.init_dir(Self::CHECKPOINT_DIR).await?;
 
+        log.init_log().await?;
+
         log.init_branch(MAINLINE).await?;
 
         Ok(log)
     }
 
-    pub fn open(object_store: Arc<dyn ObjectStore>) -> CalicoResult<TransactionLog> {
-        let log = TransactionLog { object_store };
-        // todo!("check to see if the path exists and is initialized, panic if not");
-        Ok(log)
+    pub async fn open(object_store: Arc<dyn ObjectStore>) -> CalicoResult<TransactionLog> {
+        // check to see if the path exists and is initialized, panic if not
+        let path: ObjectStorePath = Self::META_FILE.try_into().unwrap();
+        let _meta = object_store.head(&path).await?;
+
+        Ok(TransactionLog { object_store })
     }
 
     pub async fn head<'a>(&self, branch: BranchRef<'a>) -> CalicoResult<Commit> {
@@ -552,6 +558,15 @@ impl TransactionLog {
 
         Ok(())
     }
+
+    async fn init_log(&self) -> CalicoResult<()> {
+        let path: ObjectStorePath = Self::META_FILE.try_into().unwrap();
+        let data = Bytes::from("{}");
+
+        self.object_store.put(&path, data).await?;
+
+        Ok(())
+    }
 }
 
 
@@ -711,6 +726,24 @@ mod tests {
         let checkpoint_result = log.create_checkpoint(&saved_commit.commit_id, 3, &vec![test_file(5, 0, "x", "d")]).await;
 
         assert!(checkpoint_result.is_err());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn open_uninitialized_log_fails() -> CalicoResult<()> {
+        let temp_logdir = tempdir().unwrap();
+        let object_store:Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?);
+        let res = TransactionLog::open(object_store.clone()).await;
+        assert!(res.is_err());
+
+        let log = TransactionLog::init(object_store.clone()).await?;
+        let commit = test_commit_push(&log, 1, 0, "x", "a").await;
+
+        let log = TransactionLog::open(object_store.clone()).await?;
+        let head = log.head_mainline().await?;
+
+        assert_eq!(head.commit_id, commit.commit_id);
 
         Ok(())
     }

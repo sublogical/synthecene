@@ -4,23 +4,24 @@ sudo apt-install libssl-dev
 
 ### TODO: Crawler
 * frontier
+  * test using rocksdb vs yaque
+  * store periodic frontier checkpoints in object store
+  * downloading existing frontier at start of task
+  * tiered frontiers
   * ~~implement disk back frontier~~
   * ~~benchmark frontier~~
-  * support tiered frontiers
-  * support downloading existing frontier at start of task
-  * support periodic frontier checkpoints in object store
 * last visit map
+  * download existing last visit map at start of task
+  * store periodic last visit map checkpoints in object store
   * ~~implement disk backed last visit kv store~~
   * ~~benchmark last visit map~~
-  * support downloading existing last visit map at start of task
-  * support periodic last visit map checkpoints in object store
 * fetch object
-  * ~~support basic fetch~~
-  * ~~extract urls~~
-  * ~~support robots.txt~~
   * sitemaps support
   * enforce fetch rate
   * support parallel single host fetch
+  * ~~support basic fetch~~
+  * ~~extract urls~~
+  * ~~support robots.txt~~
 * schema
   * ~~support proto definitions~~
   * link
@@ -34,6 +35,7 @@ sudo apt-install libssl-dev
   * send page batch notification to object store
   * send page to kafka
 * deep crawl task
+  * track fetch telemetry - status distribution
   * ~~build domain frontier~~
   * ~~build domain last visit map~~
   * ~~track frontier in crawl task~~
@@ -45,7 +47,6 @@ sudo apt-install libssl-dev
   * ~~track fetch telemetry - latency~~
   * ~~track fetch telemetry - size~~
   * ~~track fetch telemetry - outlinks~~
-  * track fetch telemetry - status distribution
 * telemetry
   * ~~exponential decay~~
   * ~~summation~~

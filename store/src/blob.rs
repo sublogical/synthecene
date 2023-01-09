@@ -8,8 +8,8 @@ use futures::Stream;
 use object_store::Error as ObjectStoreError;
 use tar::Archive;
 use futures::stream::StreamExt;
-use tokio::io::{self, AsyncWrite, AsyncWriteExt, AsyncReadExt};
-use bytes::{BytesMut, Bytes};
+use tokio::io::{AsyncWrite, AsyncWriteExt, AsyncReadExt};
+use bytes::Bytes;
 
 pub async fn create_archive<I: AsRef<Path>, O: AsRef<Path>>(directory: I, serialized_path: O) -> CalicoResult<()>{
     let tar_gz = File::create(serialized_path)?;
@@ -28,13 +28,15 @@ pub async fn open_archive<I: AsRef<Path>, O: AsRef<Path>>(serialized_path: I, di
 }
 
 
-pub async fn write_multipart_file(_multipart_id: String, writer: &mut Box<dyn AsyncWrite + Unpin + Send>, path: &Path) -> CalicoResult<()>{
+pub async fn write_multipart_file(_multipart_id: String, writer: &mut Box<dyn AsyncWrite + Unpin + Send>, path: &Path) -> CalicoResult<u64>{
     let mut f = tokio::fs::File::open(path).await?;
     let mut buffer = [0u8; 10_000];
+    let mut bytes_written = 0;
 
     loop {
         let read_bytes = f.read(&mut buffer[..]).await?;
         writer.write_all(&mut buffer[0..read_bytes]).await?;
+        bytes_written += read_bytes;
         if read_bytes < 10_000 {
             break;
         }
@@ -42,10 +44,10 @@ pub async fn write_multipart_file(_multipart_id: String, writer: &mut Box<dyn As
     writer.flush().await?;
     writer.shutdown().await?;
 
-    Ok(())
+    Ok(bytes_written.try_into().expect("uploaded greater than u64?"))
 }
 
-async fn read_stream_file<O: AsRef<Path>>(reader: &mut Pin<Box<dyn Stream<Item = Result<Bytes, ObjectStoreError>> + Send>>, path: O) -> CalicoResult<()> {
+pub async fn read_stream_file<O: AsRef<Path>>(reader: &mut Pin<Box<dyn Stream<Item = Result<Bytes, ObjectStoreError>> + Send>>, path: O) -> CalicoResult<()> {
     let mut f = tokio::fs::File::create(path).await?;
 
     while let Some(result) = reader.next().await {
@@ -69,22 +71,11 @@ mod tests {
     use calico_shared::result::CalicoResult;
     use object_store::ObjectStore;
     use object_store::local::LocalFileSystem;
-    use rand::distributions::Alphanumeric;
-    use rand::{thread_rng, Rng};
     use tempfile::tempdir;
     use lipsum::lipsum;
     use fs_extra::dir::get_size;
 
     use super::*;
-
-    fn make_string(size:usize) -> String {
-        let rand_string: String = thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(size)
-            .map(char::from)
-            .collect();
-        rand_string
-    }
 
     fn make_file(path: &Path, size:usize) -> CalicoResult<()>{
         let mut file = File::create(path.to_str().unwrap().to_string())?;

@@ -54,6 +54,21 @@ UPDATE
 
 
 ## TODO List
+* Manifest
+  * Define object store metadata
+  * Define database transaction log location
+  * Define database object locations
+  * Define database transaction log partitioning scheme
+  * Define database object partitioning scheme
+  * Define database object bucketing scheme
+* Blob
+  * ~~Archive creation from directory~~
+  * ~~Restore directory from archive~~
+  * ~~Upload multipart file~~
+  * ~~Download multipart file~~
+  * ~~Store blob in transaction log~~
+  * Fail creation of table using blobs
+  * Blob cleanup configuration
 * Benchmark Test Tool
   * Write only benchmark
   * Transaction only benchmark
@@ -124,11 +139,13 @@ UPDATE
   * ~~Move to Command Pattern~~
   * ~~Direct Write from Rust~~
 * Transaction Log
-  * Support ReferencePoint Parser
-  * Support Column & ColumnGroup metadata in transaction log
-  * Support squash + rebase to combine lots of small updates to a single update
-  * Support vaccuum / garbage collection on pre-checkpoint commits
-  * Support vaccuum / garbage collection on unreferenced objects
+  * Relative root for transaction log
+  * ReferencePoint Parser
+  * Column & ColumnGroup metadata in transaction log
+  * Squash + rebase to combine lots of small updates to a single update
+  * Vacuum / garbage collection on pre-checkpoint commits
+  * Vacuum / garbage collection on unreferenced objects
+  * ~~Open transaction log (failing if it's not there)~~
   * ~~Support ReferencePoint~~
   * ~~Support transaction log tree~~
   * ~~Support branch labels (e.g. mainline)~~
