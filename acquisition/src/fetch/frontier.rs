@@ -17,6 +17,10 @@ use object_store::path::Path as ObjectStorePath;
 
 use acquisition::protocol;
 
+pub struct PriorityQueue {
+
+}
+
 pub struct FrontierSender(yaque::Sender);
 
 impl FrontierSender {
@@ -218,7 +222,7 @@ impl LastVisitStore {
 
 #[cfg(test)]
 mod tests {
-    use std::{time::{Duration, Instant}, cmp::max, sync::Arc};
+    use std::{time::{Duration, Instant, SystemTime, UNIX_EPOCH}, cmp::max, sync::Arc};
 
     use crate::fetch::frontier::FrontierStore;
 
@@ -356,6 +360,186 @@ mod tests {
             folder_size as f32 / (start.elapsed().as_millis() as f32 * 1000.),
             folder_size as f32 / 100_000.
         );
+    }
+
+    #[tokio::test]
+    async fn try_sled() {
+        let temp = tempdir().unwrap();
+        let tree = sled::open(temp).unwrap();
+
+        let inputs = vec![(3u64, "fire"), (1,"hi"), (2, "test"), (1, "mom"),];
+        for (pri, value) in inputs {
+            let id = tree.generate_id().unwrap();
+            let mut key = [0u8;16];
+
+            println!("PRI {:?}", pri.to_be_bytes());
+            println!("ID  {:?}", id.to_be_bytes());
+
+            key[..8].clone_from_slice(&pri.to_be_bytes());
+            key[8..16].clone_from_slice(&id.to_be_bytes());
+
+            tree.insert(key, value).unwrap();
+        }
+
+        while let Ok(Some(item)) = tree.pop_min() {
+            println!("ITEM: {:?}", item);
+        }
+    }
+
+    #[tokio::test]
+    async fn stress_sled() {
+        let temp = tempdir().unwrap();
+        let tree = sled::open(&temp).unwrap();
+        let num = 100_000;
+
+        let start = Instant::now();
+        for _ in 1..num+1 {
+            let rand_string: String = thread_rng()
+                .sample_iter(&Alphanumeric)
+                .take(60)
+                .map(char::from)
+                .collect();
+
+//            let pri: u64 = thread_rng().gen_range(1..11);
+            let pri: u64 = thread_rng().gen_range(1..11);
+            let id = tree.generate_id().unwrap();
+            let mut key = [0u8;16];
+
+            key[..8].clone_from_slice(&pri.to_be_bytes());
+            key[8..16].clone_from_slice(&id.to_be_bytes());
+
+            tree.insert(key, rand_string.as_bytes()).unwrap();
+        }
+        tree.flush().unwrap();
+        let folder_size = get_size(temp.path()).unwrap();
+
+        println!("Write URLs: {} ({:.2} kUrl/s)", 
+            num, 
+            num as f32 / start.elapsed().as_millis() as f32);
+        println!("Write size: {:.2} ({:.2} mb/s)", 
+            folder_size as f32 / 1_000_000., 
+            (folder_size as f32 / 1_000.) / start.elapsed().as_millis() as f32);
+
+        let mut url = "".to_string();
+        let mut count = 0;
+        
+        let start = Instant::now();
+        while let Ok(Some(item)) = tree.pop_min() {
+            let next_url = std::str::from_utf8(&item.1).unwrap().to_string();
+            count += 1;
+            url = max(url, next_url)
+        }
+        println!("Read URLs: {} ({:.2} kUrl/s)", 
+            count, 
+            count as f32 / start.elapsed().as_millis() as f32);
+
+    }
+
+    fn id_merge_operator(
+        _key: &[u8],               // the key being merged
+        old_value: Option<&[u8]>,  // the previous value, if one existed
+        operands: &rocksdb::MergeOperands
+    ) -> Option<Vec<u8>> {       // set the new value, return None to delete
+        let mut current = old_value
+          .map(|ov| u64::from_be_bytes(ov[0..8].try_into().expect("incorrect size")))
+          .unwrap_or_else(|| 0);
+      
+        for op in operands {
+            current += u64::from_be_bytes(op[0..8].try_into().expect("incorrect size"));
+        }
+        Some(current.to_be_bytes().to_vec())
+    }
+    #[tokio::test]
+    async fn try_rocks() {
+        let temp = tempdir().unwrap();
+        let mut opts = rocksdb::Options::default();
+
+        opts.create_if_missing(true);
+        opts.set_merge_operator_associative("test operator", id_merge_operator);
+
+        let db = rocksdb::DB::open(&opts, temp).unwrap();
+
+        let mask:u128 = (1 << 96) - 1;
+
+        println!("MASK = {:?}", mask.to_be_bytes());
+        let inputs = vec![(3u32, "fire"), (1,"hi"), (2, "test"), (1, "mom"),];
+        let id:u128 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();    
+        println!("TIMENANO = {:?}", id.to_be_bytes());
+        for (pri, value) in inputs {
+        
+            let id:u128 = (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() & mask).try_into().unwrap();    
+
+            let mut key = [0u8;16];
+
+            println!("PRI {:?}", pri.to_be_bytes());
+            println!("ID  {:?}", id.to_be_bytes());
+
+            key[..4].clone_from_slice(&pri.to_be_bytes());
+            key[4..16].clone_from_slice(&id.to_be_bytes()[4..16]);
+            println!("KEY  {:?}", key);
+
+            db.put(key, value.as_bytes()).unwrap();
+        }
+
+        let iter = db.iterator(rocksdb::IteratorMode::Start); // Always iterates forward
+        for item in iter {
+            let (key, value) = item.unwrap();
+            println!("ITEM: {:?}", key);
+            db.delete(key).unwrap();    
+        }
+    }
+
+    #[tokio::test]
+    async fn stress_rocks() {
+        let temp = tempdir().unwrap();
+        let db = rocksdb::DB::open_default(&temp).unwrap();
+        let num = 100_000;
+        let mask:u128 = (1 << 96) - 1;
+
+        let start = Instant::now();
+        for _ in 1..num+1 {
+            let rand_string: String = thread_rng()
+                .sample_iter(&Alphanumeric)
+                .take(60)
+                .map(char::from)
+                .collect();
+
+//            let pri: u64 = thread_rng().gen_range(1..11);
+            let pri: u32 = thread_rng().gen_range(1..11);
+            let id:u128 = (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() & mask).try_into().unwrap();    
+            let mut key = [0u8;16];
+
+            key[..4].clone_from_slice(&pri.to_be_bytes());
+            key[4..16].clone_from_slice(&id.to_be_bytes()[4..16]);
+
+            db.put(key, rand_string.as_bytes()).unwrap();
+        }
+        db.flush().unwrap();
+        let folder_size = get_size(temp.path()).unwrap();
+
+        println!("Write URLs: {} ({:.2} kUrl/s)", 
+            num, 
+            num as f32 / start.elapsed().as_millis() as f32);
+        println!("Write size: {:.2} ({:.2} mb/s)", 
+            folder_size as f32 / 1_000_000., 
+            (folder_size as f32 / 1_000.) / start.elapsed().as_millis() as f32);
+
+        let mut url = "".to_string();
+        let mut count = 0;
+        
+        let start = Instant::now();
+        let iter = db.iterator(rocksdb::IteratorMode::Start); // Always iterates forward
+        for item in iter {
+            let (key, value) = item.unwrap();
+            let next_url = std::str::from_utf8(&value).unwrap().to_string();
+            count += 1;
+            url = max(url, next_url);
+            db.delete(key).unwrap();    
+        }
+        println!("Read URLs: {} ({:.2} kUrl/s)", 
+            count, 
+            count as f32 / start.elapsed().as_millis() as f32);
+
     }
 }
 

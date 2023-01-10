@@ -1,5 +1,5 @@
 ```
-sudo apt-install libssl-dev
+sudo apt-install libssl-dev libclang-dev
 ```
 
 ### TODO: Crawler
