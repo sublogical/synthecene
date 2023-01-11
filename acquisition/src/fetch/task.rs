@@ -8,7 +8,7 @@ use object_store::ObjectStore;
 use crate::fetch::{retrieve};
 use acquisition::protocol;
 
-use super::{DomainState, frontier::{LastVisitStore, FrontierStore }, full_url, Capture};
+use super::{DomainState, state::{LastVisitStore, FrontierStore }, full_url, Capture};
 use crate::telemetry;
 
 #[async_trait]

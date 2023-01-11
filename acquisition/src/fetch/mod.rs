@@ -8,7 +8,7 @@ use scraper::{Html, Selector};
 
 pub mod controller;
 pub mod smarts;
-pub mod frontier;
+pub mod state;
 pub mod task;
 
 fn full_url(host: &protocol::Host, relative_url: &String) -> String{
