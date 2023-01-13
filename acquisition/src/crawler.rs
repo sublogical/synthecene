@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use calico_shared::result::CalicoResult;
 use fetch::controller::parse_cli_controller;
 use object_store::{local::LocalFileSystem, ObjectStore};
 use tempfile::tempdir;
@@ -9,7 +8,7 @@ mod fetch;
 mod telemetry;
 
 #[tokio::main]
-async fn main() -> CalicoResult<()> {
+async fn main() -> fetch::task::Result<()> {
     let mut controller = parse_cli_controller();
 
     // Simple single thread task loop

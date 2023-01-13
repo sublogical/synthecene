@@ -11,7 +11,6 @@ pub mod result {
     #[derive(Debug)]
     pub enum CalicoError {
         RobotForbidden,
-        ImproperCheckpointCommit(String),
 
         ArrowMessedUp(ArrowError),
         BranchNotFound(String),

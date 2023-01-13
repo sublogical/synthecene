@@ -3,22 +3,19 @@ sudo apt-install libssl-dev libclang-dev
 ```
 
 ### TODO: Crawler
-* frontier
+* state
+  * store periodic checkpoints in object store
+  * downloading existing state at start of task
   * ~~test using rocksdb vs yaque~~
-  * priority queue for rocksdb
-  * proto serialization for priority queue
-  * priority queue in column family
-  * port frontier to rocksdb queue
-  * store periodic frontier checkpoints in object store
-  * downloading existing frontier at start of task
-  * tiered frontiers
+  * ~~priority queue for rocksdb~~
+  * ~~proto serialization for priority queue~~
+  * ~~priority queue in column family~~
+  * ~~port frontier to rocksdb queue~~
+  * ~~tiered frontiers~~
   * ~~implement disk back frontier~~
   * ~~benchmark frontier~~
-* last visit map
-  * port last visit to rocksdb
-  * last visit in column family
-  * download existing last visit map at start of task
-  * store periodic last visit map checkpoints in object store
+  * ~~port last visit to rocksdb~~
+  * ~~last visit in column family~~
   * ~~implement disk backed last visit kv store~~
   * ~~benchmark last visit map~~
 * fetch object

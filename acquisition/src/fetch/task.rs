@@ -8,12 +8,21 @@ use object_store::ObjectStore;
 use crate::fetch::{retrieve};
 use acquisition::protocol;
 
-use super::{DomainState, state::{LastVisitStore, FrontierStore }, full_url, Capture};
+use super::state::{DomainState};
+use super::{full_url, Capture, robots_filter};
 use crate::telemetry;
+
+#[derive(Debug)]
+pub enum Error {
+    StateFailure(crate::fetch::state::Error),
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
 
 #[async_trait]
 pub trait Task {
-    async fn run(&mut self, object_store: Arc<dyn ObjectStore>) -> CalicoResult<TaskReport>;
+    async fn run(&mut self, object_store: Arc<dyn ObjectStore>) -> Result<TaskReport>;
 }
 
 /// Frontier task uses a queue & prioritization function to recursively crawl a domain.
@@ -81,26 +90,15 @@ impl CrawlTelementry {
 
 #[async_trait]
 impl Task for DeepCrawlTask {
-    async fn run(&mut self, object_store: Arc<dyn ObjectStore>) -> CalicoResult<TaskReport> {
+    async fn run(&mut self, object_store: Arc<dyn ObjectStore>) -> Result<TaskReport> {
         let mut pages_fetched = 0;
 
         // TODO: move crawler state for a configured local manifest
-        let path = Path::new("/tmp/.crawler_state");
-        let mut domain_state = DomainState::for_domain(&self.domain, self.fetch_rate_ms).await?;
+        let local_path = Path::new("/tmp/.crawler_state");
+        let remote_path = Path::new("crawler_state");
+        
+        let mut domain_state = DomainState::init(&self.domain, &local_path, &remote_path).await.expect("should work");
         let now = Instant::now();
-
-        // TODO: move crawler state layout to a configured local manifest
-        let frontier_path = path.join(&self.domain.hostname).join("frontier");
-
-        // TODO: move remote object layout to a configured remote manifest
-        let remote_object_path = "frontier".to_string();
-
-        let mut frontier = FrontierStore::init_local(object_store,
-            &remote_object_path,
-            &frontier_path.to_str().expect("unable to convert path to string").to_string()).await?;
-
-        let last_visit_path = path.join(&self.domain.hostname).join("last_visit");
-        let mut last_visit = LastVisitStore::init_local(&last_visit_path)?;
 
         let mut telemetry = CrawlTelementry::init();
 
@@ -109,54 +107,81 @@ impl Task for DeepCrawlTask {
         if self.seed_list.len() == 0 {
             self.seed_list.push("/".to_string());
         }
-        frontier.sender.append_paths(&self.seed_list).await?;
+        
+        fn append_seeds(domain_state: &mut DomainState, seed_list: &Vec<String>) -> Result<()>{
+            for seed in seed_list {
+                let request = protocol::CaptureRequest { 
+                    path: seed.to_string(), 
+                    capture_type: protocol::RequestType::Page.into()
+                };
+                domain_state.frontier.append_message(0, &request)
+                    .map_err(|err| Error::StateFailure(err))?;
 
-        let mut url_stream = frontier.receiver
-            .take(self.num_to_fetch as usize)
-            .take_while(|_| now.elapsed().as_millis() < self.time_to_fetch.into());
-            
-        while let Some(result) = url_stream.next() {
-            match result {
-                Ok(url) => {
-                    let full_url = full_url(&self.domain, &url);
-                    match retrieve(&mut domain_state, full_url).await {
+                let last_visit = protocol::LastVisit { 
+                    added_to_frontier: true,
+                    ..Default::default() 
+                };
+
+                domain_state.last_visit.put_message(seed.as_bytes(), &last_visit)
+                    .map_err(|err| Error::StateFailure(err))?;
+            }
+            Ok(())
+        }
+        append_seeds(&mut domain_state, &self.seed_list);
+
+        loop {
+            let mut fetched_this_batch = 0;
+            let mut new_urls = vec![];
+            {
+                // todo: implement and move to iter_message
+                // todo: either figure out a way to commit the item guard or eliminate it
+                let mut url_stream = domain_state.frontier.iter_message::<protocol::CaptureRequest>()
+                    .take(self.num_to_fetch as usize)
+                    .take_while(|_| now.elapsed().as_millis() < self.time_to_fetch.into())
+                    .flatten()
+                    .filter(|capture_request| robots_filter(&domain_state.robots, &capture_request.path));
+
+                while let Some(capture_request) = url_stream.next() {
+                    fetched_this_batch += 1;
+                    let full_url = full_url(&self.domain, &capture_request.path);
+                    
+                    match retrieve(full_url).await {
                         Ok(capture) => {
                             telemetry.add(&capture);
+                            new_urls.extend(capture.outlinks);
 
-                            let unique_and_new:Vec<_> = capture.outlinks.into_iter()
-                                .unique()
-                                .filter(|link| !last_visit.contains(link).unwrap_or(false))
-                                .collect();
-                            
-                            let now:u64 = SystemTime::now().duration_since(UNIX_EPOCH)
-                                .expect("Time went backwards")
-                                .as_millis()
-                                .try_into()
-                                .expect("Time is millions of years in the future");
-                            
-                            for link in &unique_and_new {
-                                let entry = protocol::LastVisit {
-                                    added_to_frontier: now,
-                                    fetched: None,
-                                    status_code: None
-                                };
-
-                                last_visit.set(&link, entry)?;  
-                            }
-                
-                            frontier.sender.append_paths(&unique_and_new).await?;
-                            pages_fetched += 1;
-                        },
-                        Err(err) => {
-                            println!("error = {:?}", err);
+                            let last_visit = protocol::LastVisit { 
+                                added_to_frontier: true,
+                                status_code: Some(capture.status_code),
+                                fetched_at: Some(capture.fetched_at),
+                                ..Default::default() 
+                            };
+                            domain_state.last_visit.put_message(capture_request.path.as_bytes(), &last_visit)
+                                .expect("must be able to save visit state");
+            
                         }
-                    };
+                        Err(err) => {
+                            println!("Error fetching URL: {}", err);
+                        }
+                    }
+                }
+            }
 
-                }
-                Err(err) => {
-                    println!("error = {:?}", err);
-                    break;
-                }
+            // todo: filter out urls that are to other hosts
+            // todo: rank URLs by priority
+
+            let unique_and_new:Vec<_> = new_urls.into_iter()
+                .unique()
+                .filter(|link| !domain_state.last_visit.contains(link.as_bytes()).unwrap_or(false))
+                .collect();
+
+            append_seeds(&mut domain_state, &unique_and_new);
+            pages_fetched += fetched_this_batch;
+
+            if fetched_this_batch == 0 {
+                break;
+            } else {
+                self.num_to_fetch -= fetched_this_batch;
             }
         }
 

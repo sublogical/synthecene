@@ -1,23 +1,24 @@
 use calico_shared::types::systemtime_to_timestamp;
+use prost::bytes::{Buf, Bytes};
 use rand::RngCore;
 use storelib::blob::{create_archive, write_multipart_file, read_stream_file, open_archive};
-use calico_shared::result::{CalicoResult, CalicoError};
-use std::future;
+use std::fmt::Debug;
+use std::io;
+use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
-use std::path::Path;
-use std::str::from_utf8;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use prost::Message;
-use futures::FutureExt;
+use result::ResultOptionExt;
 use storelib::log::{TransactionLog, Commit, MAINLINE};
 use tempfile::tempdir;
 use uuid::Uuid;
-use yaque::channel;
 use object_store::ObjectStore;
 use object_store::path::Path as ObjectStorePath;
 
 use acquisition::protocol;
+
+use super::{full_url, retrieve};
 
 // This generates an efficient but lossy key:
 // - no guarantee of ordering in a distribute system
@@ -43,9 +44,23 @@ fn generate_lossy_key(priority: u8) -> [u8;16] {
 }
 
 #[derive(Debug)]
-enum Error {
-    QueueEmpty,
-    DatabaseError(rocksdb::Error)
+pub enum Error {
+    ImproperCheckpointCommit(String),
+    FailedCommit(Box<dyn std::error::Error>),
+    CommitCollision(Box<dyn std::error::Error>),
+
+    IoError(io::Error),
+    DecodeError(prost::DecodeError),
+    EncodeError(prost::EncodeError),
+    DatabaseError(rocksdb::Error),
+    ObjectStoreError(object_store::Error)
+}
+
+impl From<io::Error> for Error {
+    fn from(err: io::Error) -> Self {
+        Error::IoError(err)
+    }
+
 }
 
 impl From<rocksdb::Error> for Error {
@@ -54,300 +69,461 @@ impl From<rocksdb::Error> for Error {
     }
 
 }
+impl From<object_store::Error> for Error {
+    fn from(err: object_store::Error) -> Self {
+        Error::ObjectStoreError(err)
+    }
+}    
+
+impl From<prost::EncodeError> for Error {
+    fn from(err: prost::EncodeError) -> Self {
+        Error::EncodeError(err)
+    }
+}    
+
+impl From<prost::DecodeError> for Error {
+    fn from(err: prost::DecodeError) -> Self {
+        Error::DecodeError(err)
+    }
+}    
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-pub struct PriorityQueue(Arc<rocksdb::DB>);
 
-pub struct ItemGaurd {
+#[derive(Debug)]
+pub struct ItemGuard<T>{
     db: Arc<rocksdb::DB>,
+    cf: String,
     key: Box<[u8]>,
-    value: Box<[u8]>,
+    value: T,
+    save: bool
 }
 
-impl ItemGaurd {
+impl <T> ItemGuard<T> {
     /// Commits the changes to the queue
-    pub fn commit(mut self) -> Result<()> {
-        self.db.delete(self.key)?;    
-        Ok(())
+    pub fn save(mut self) {
+        self.save = true;
     }
 }
 
-impl Deref for ItemGaurd {
-    type Target = Box<[u8]>;
-    fn deref(&self) -> &Box<[u8]> {
+impl <T> Drop for ItemGuard<T> {
+    fn drop(&mut self) {
+        if !self.save {
+            let cf = self.db.cf_handle(&self.cf).expect("incorrect cf name");
+            self.db.delete_cf(&cf, &self.key).expect("should be able to delete the record we just read");
+        }
+    }
+}
+
+impl <T> Deref for ItemGuard<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
         &self.value
     }
 }
 
-impl DerefMut for ItemGaurd {
-    fn deref_mut(&mut self) -> &mut Box<[u8]> {
+impl <T> DerefMut for ItemGuard<T> {
+    fn deref_mut(&mut self) -> &mut T {
         &mut self.value
     }
 }
 
+pub struct PriorityQueue(Arc<rocksdb::DB>, String);
 
 impl PriorityQueue {
-    pub fn init<I>(path:I) -> Result<PriorityQueue> 
-    where
-        I: AsRef<Path>
+    pub fn init(db: Arc<rocksdb::DB>, cf: &str) -> Result<PriorityQueue> 
     {
-        let db = rocksdb::DB::open_default(path)?;
+        let cf = cf.to_string();
 
-        Ok(PriorityQueue(Arc::new(db)))
+        Ok(PriorityQueue(db, cf))
+    }
+    
+    fn cf(&self) -> Arc<rocksdb::BoundColumnFamily<'_>> {
+        self.0.cf_handle(&self.1).expect("incorrect cf name")
     }
 
-    pub fn append(&self, priority: u8, value: &[u8]) -> Result<()> {
+    /**
+     * appends raw bytes to the queue
+     */
+    pub fn append<B>(&self, priority: u8, value: B) -> Result<()> 
+    where
+        B: AsRef<[u8]>
+    {
         let key = generate_lossy_key(priority);
 
-        self.0.put(key, value)?;
+        self.0.put_cf(&self.cf(), key, &value)?;
 
         Ok(())
     }
 
-    pub fn flush(&self) -> Result<()> {
-        self.0.flush()?;
-        Ok(())
-    }
-
-    pub fn pop(&mut self) -> Result<ItemGaurd> 
+    /**
+     * Append a message to the queue, serializing it with prost
+     */
+    pub fn append_message<T>(&self, priority: u8, message: &T) -> Result<()>
+    where
+        T : prost::Message 
     {
-        let db = self.0.clone();
+        let expected_len = message.encoded_len();
 
-        let mut iter = db.iterator(rocksdb::IteratorMode::Start); // Always iterates forward
-        iter.next()
-            .map_or(Err(Error::QueueEmpty), |result|
-                result
-                    .map_err(|err| Error::DatabaseError(err))
-                    .map(|(key,value)|
-                        ItemGaurd { db: self.0.clone(), key, value }))
+        let mut buf = Vec::with_capacity(18);
+        message.encode(&mut buf)?;
+        assert_eq!(expected_len, buf.len());
+
+        self.append(priority, &buf)
     }
 
-    pub fn iter<'db : 'iter, 'iter>(&'db mut self) -> PriorityQueueIterator<'db, 'iter> {
-        let mut iter = self.0.iterator(rocksdb::IteratorMode::Start); // Always iterates forward
+    /**
+     * Iterate over the queue, returning raw bytes
+     *
+     * Note that this iterator will destroy the entries as it iterates over them. If you wish to save an entry, call `save` on the `ItemGuard` before dropping it.
+     */
+    pub fn iter<'db : 'iter, 'iter>(&'db mut self) -> PriorityQueueIterator<'iter> {
+        let iter = self.0.iterator_cf(&self.cf(), rocksdb::IteratorMode::Start); // Always iterates forward
+        PriorityQueueIterator { iter, db: self.0.clone(), cf: self.1.clone() }
+    }
 
-        PriorityQueueIterator { iter, db: self }
+    /**
+     * Iterate over the queue, decoding the messages with prost
+     * 
+     * Note that this iterator will destroy the messages as it iterates over them. If you wish to save a message, call `save` on the `ItemGuard` before dropping it.
+     */
+    pub fn iter_message<'db : 'iter, 'iter, T>(&'db mut self) -> PriorityQueueMessageIterator<'iter,T> 
+    where
+        T : prost::Message + Default
+    {
+        let iter = self.0.iterator_cf(&self.cf(), rocksdb::IteratorMode::Start); // Always iterates forward
+        let inner = PriorityQueueIterator { iter, db: self.0.clone(), cf: self.1.clone() };
+        PriorityQueueMessageIterator(inner, PhantomData)
     }
 
 }
 
-struct PriorityQueueIterator<'db, 'iter> {
+pub struct PriorityQueueMessageIterator<'iter, T: prost::Message>(PriorityQueueIterator<'iter>, PhantomData<T>);
+impl <'iter, T : prost::Message + Default> Iterator for PriorityQueueMessageIterator<'iter, T> {
+    type Item = Result<ItemGuard<T>> ;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
+            .map(|res|
+                res.and_then(|item| {
+                    let db = item.db.clone();
+                    let cf = item.cf.clone();
+                    let key = item.key.clone();
+
+                    let out = T::decode(item.as_ref())                    
+                        .map_err(|err| Error::DecodeError(err))
+                        .map(|value| ItemGuard { db, cf, key, value, save: false });
+
+                    item.save();
+
+                    out
+                }))
+    }
+}
+
+pub struct PriorityQueueIterator<'iter> {
     iter: rocksdb::DBIterator<'iter>,
-    db: &'db PriorityQueue
+    db: Arc<rocksdb::DB>,
+    cf: String,
 }
 
-impl Iterator for PriorityQueueIterator<'_, '_> {
-    type Item = Result<ItemGaurd> ;
+impl <'iter> Iterator for PriorityQueueIterator<'iter> {
+    type Item = Result<ItemGuard<Box<[u8]>>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next()
             .map(|result| result
                 .map_err(|err| Error::DatabaseError(err))
-                .map(|(key,value)|
-                    ItemGaurd { db: self.db.0.clone(), key, value }))
+                .map(|(key, value)| 
+                    ItemGuard { db: self.db.clone(), cf: self.cf.clone(), key, value, save: false }))
     }
 }
 
 
+pub struct KvTable(Arc<rocksdb::DB>, String);
+
+impl KvTable {
+    pub fn init(db: Arc<rocksdb::DB>, cf: &str) -> Result<KvTable> 
+    {
+        let cf = cf.to_string();
+
+        Ok(KvTable(db, cf))
+    }
+    
+    /**
+     * Get the column family handle for this table
+     */
+    fn cf(&self) -> Arc<rocksdb::BoundColumnFamily<'_>> {
+        self.0.cf_handle(&self.1).expect("incorrect cf name")
+    }
+
+    /**
+     * Get a value from the table returning raw bytes
+     */
+    pub fn get<K,V>(&self, key: K) -> Result<Option<Vec<u8>>>
+    where
+        K: AsRef<[u8]>
+    {
+        Ok(self.0.get_cf(&self.cf(), key)?)
+    }
+
+    /**
+     * Get a message from the table, decoding it with prost
+     */
+    pub fn get_message<K,T>(&self, key: K) -> Result<Option<T>>
+    where
+        K: AsRef<[u8]>,
+        T : prost::Message + Default
+    {
+        let value = self.0.get_cf(&self.cf(), key)?;
+
+        let res = value.map(|bytes| T::decode(Bytes::from(bytes)));
+
+        // convert Option<Result> to Result<Option>, mapping the error to ours
+        Ok(res.invert()?)
+    }
+
+    /**
+     * Check if a key exists in the table
+     */
+    pub fn contains<K>(&self, key: K) -> Result<bool>
+    where
+        K: AsRef<[u8]>
+    {
+        Ok(self.0.get_cf(&self.cf(), key)?.is_some())
+    }
+
+    /**
+     * Put a value into the table, using raw bytes
+     */
+    pub fn put<K, B>(&self, key: K, value: B) -> Result<()> 
+    where
+        K: AsRef<[u8]>,
+        B: AsRef<[u8]>
+    {
+        self.0.put_cf(&self.cf(), key, &value)?;
+
+        Ok(())
+    }
+
+    /**
+     * Put a message into the table, encoding it with prost
+     */
+    pub fn put_message<K,T>(&self, key: K, message: &T) -> Result<()>
+    where
+        K: AsRef<[u8]>,
+        T : prost::Message 
+    {
+        let expected_len = message.encoded_len();
+
+        let mut buf = Vec::with_capacity(18);
+        message.encode(&mut buf)?;
+        assert_eq!(expected_len, buf.len());
+
+        self.put(key, &buf)
+    }
+}
 
 pub struct DomainState {
-    frontier: PriorityQueue,
-}
-pub struct FrontierSender(yaque::Sender);
-
-impl FrontierSender {
-    pub async fn append_paths(&mut self, paths: &Vec<String>) -> CalicoResult<()> {
-        let paths_bytes = paths.iter().map(|s| s.as_bytes().to_vec());
-        
-        self.0.send_batch(paths_bytes).await?;
-        Ok(())
-    }    
-}
-pub struct FrontierReceiver(yaque::Receiver);
-
-impl Iterator for FrontierReceiver {
-    type Item = CalicoResult<String>;
-
-    /// Returns an iterator that always immediately returns.
-    /// 
-    /// None - indicates nothing is available
-    /// Some(Ok(_)) - indicates a URL is available
-    /// Some(Err(_)) - indicates something went wrong and you should freak out
-    /// 
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.recv().now_or_never()
-            .map(|result| match result {
-                Ok(gaurd) => {
-                    let output = from_utf8(&*gaurd).map(|url| url.to_string())?;
-                    match gaurd.commit() {
-                        Err(err) => {
-                            return Err(CalicoError::from(err));
-                        },
-                        _ => {}
-                    }
-                    Ok(output)
-                },
-                Err(err) => {
-                    Err(CalicoError::from(err))
-                }
-            })
-    }
+    pub local_path: PathBuf,
+    pub remote_path: PathBuf,
+    pub db: Arc<rocksdb::DB>,
+    pub frontier: PriorityQueue,
+    pub last_visit: KvTable,
+    pub host: protocol::Host,
+    pub robots: Option<String>,
 }
 
-/// Frontier contains the queue(s) of prioritized & sorted URLs to be captured
-pub struct FrontierStore {
-    pub sender: FrontierSender,
-    pub receiver: FrontierReceiver,
+impl DomainState {
+    pub(crate) async fn fetch_robots(host: &protocol::Host) -> Result<Option<String>> {
+        let url = full_url(host, &"/robots.txt".to_string());
+        let robots = retrieve(url).await.map(|robots_capture| robots_capture.body).ok();
 
-    log: Arc<TransactionLog>,
-    object_store: Arc<dyn ObjectStore>,
-    remote_path: String,
-    local_path: String,
-}
-
-async fn restore_checkpoint(object_store: Arc<dyn ObjectStore>,
-                            commit: &Commit<'_>,
-                            local_path: &String) -> CalicoResult<()> {
-    if commit.tile_files.len() != 1 {
-        return Err(CalicoError::ImproperCheckpointCommit("Checkpoints should have exactly 1 tile".to_string()));
+        Ok(robots)
     }
 
-    let tile_file = commit.tile_files.get(0).unwrap();
-    if tile_file.file.len() != 1 {
-        return Err(CalicoError::ImproperCheckpointCommit("Checkpoints should have exactly 1 file".to_string()));
+    pub(crate) fn open_db<I>(path:I) -> Result<Arc<rocksdb::DB>>
+    where
+        I: AsRef<Path>
+    {
+        let mut cf_opts = rocksdb::Options::default();
+        cf_opts.set_max_write_buffer_number(16);
+        let cf_frontier = rocksdb::ColumnFamilyDescriptor::new("cf_frontier", cf_opts);
+
+        let mut cf_opts = rocksdb::Options::default();
+        cf_opts.set_max_write_buffer_number(16);
+        let cf_last_visit = rocksdb::ColumnFamilyDescriptor::new("cf_last_visit", cf_opts);
+
+        let mut db_opts = rocksdb::Options::default();
+        db_opts.create_missing_column_families(true);
+        db_opts.create_if_missing(true);
+
+        Ok(Arc::new(rocksdb::DB::open_cf_descriptors(&db_opts, path, vec![cf_frontier, cf_last_visit])?))
     }
 
-    let file = tile_file.file.get(0).unwrap();
-
-    if file.file_type != storelib::protocol::FileType::Blob as i32 {
-        return Err(CalicoError::ImproperCheckpointCommit("Checkpoints should always be type BLOB".to_string()));
-    }
-
-    let object_path: ObjectStorePath = file.file_path.clone().try_into().unwrap();
-
-    // todo: shouldn't be assuming we can use tempdir for temporary storage here
-    let temp = tempdir().unwrap();
-    let download_archive_path = temp.path().join("download_archive.tgz");
-    println!("download {} to {}", object_path, download_archive_path.display());
-
-    // Download the archive file from storage
-    let mut reader = object_store.get(&object_path).await?.into_stream();
-    read_stream_file(&mut reader, &download_archive_path).await?;
-    println!("open archive from {} to {}", download_archive_path.display(), local_path);
-
-    open_archive(&download_archive_path, local_path).await?;
-
-    Ok(())
-}
-
-impl FrontierStore {
-    pub async fn init_local(object_store: Arc<dyn ObjectStore>,
-                            remote_path: &String,
-                            local_path: &String)
-                            -> CalicoResult<FrontierStore> {
-        // open or create transaction log
-        let log = Arc::new(match TransactionLog::open(object_store.clone()).await {
-            Ok(log) => Ok(log),
-            Err(_) => TransactionLog::init(object_store.clone()).await
-        }?);
-
-        // if we can load a head commit from the transaction log, then there 
-        // is an existing frontier checkpoint to work from
-        if let Ok(commit) = log.head_mainline().await {
-            println!("restoring checkpoint from {:?}", commit.commit_id);
-            restore_checkpoint(object_store.clone(), &commit, &local_path).await?;
+    pub(crate) async fn download_checkpoint<O>(object_store: Arc<dyn ObjectStore>,
+                                               commit: &Commit<'_>,
+                                               output_path:O) -> Result<()>
+    where
+        O: AsRef<Path> + Debug
+    {
+        if commit.tile_files.len() != 1 {
+            return Err(Error::ImproperCheckpointCommit("Checkpoints should have exactly 1 tile".to_string()));
         }
+    
+        let tile_file = commit.tile_files.get(0).unwrap();
+        if tile_file.file.len() != 1 {
+            return Err(Error::ImproperCheckpointCommit("Checkpoints should have exactly 1 file".to_string()));
+        }
+    
+        let file = tile_file.file.get(0).unwrap();
+    
+        if file.file_type != storelib::protocol::FileType::Blob as i32 {
+            return Err(Error::ImproperCheckpointCommit("Checkpoints should always be type BLOB".to_string()));
+        }
+    
+        let object_path: ObjectStorePath = file.file_path.clone().try_into().unwrap();
+    
+        println!("download {} to {:?}", object_path, output_path);
 
-        // todo: download existing frontier archive if appropriate
-        println!("open frontier using {}", local_path);
+        // Download the archive file from storage
+        let mut reader = object_store.get(&object_path).await?.into_stream();
+        read_stream_file(&mut reader, &output_path).await?;    
+        
+        todo!("re-implement open checkpoint logic");        
+    }
+    /*
+        // todo: shouldn't be assuming we can use tempdir for temporary storage here
+        let temp = tempdir().unwrap();
+        let download_archive_path = temp.path().join("download_archive.tgz");
+ */
 
-        let (sender, receiver) = channel(local_path).unwrap();
-        Ok(FrontierStore { 
-            local_path: local_path.to_string(),
-            remote_path: remote_path.to_string(),
-            sender: FrontierSender(sender),
-            receiver: FrontierReceiver(receiver).into_iter(),
-            log,
-            object_store: object_store.clone()
-         })
+    pub(crate) async fn open_checkpoint<I, O>(input_path:I, output_path:I) -> Result<()>
+    where
+        O: AsRef<Path> + Debug,
+        I: AsRef<Path> + Debug
+    {
+        open_archive(input_path, output_path).await?;
+
+        todo!("re-implement open checkpoint logic");        
     }
 
-    pub async fn checkpoint(&mut self) -> CalicoResult<storelib::protocol::Commit> {
-        let temp = tempdir().unwrap();
-        let token = Uuid::new_v4().to_string();
-        let object_path = format!("{}/{}",self.remote_path, token);
-        let object_path: ObjectStorePath = object_path.try_into().unwrap();
+    pub async fn init<I>(host: &protocol::Host, 
+                         local_path:I,
+                         remote_path:I) -> Result<DomainState>
+    where
+        I: AsRef<Path>
+    {
+        let local_path = local_path.as_ref().to_path_buf();
+        let remote_path = remote_path.as_ref().to_path_buf();
 
-        // todo: shouldn't be assuming we can use tempdir for temporary storage here
-        let temp_path = temp.path().join("frontier_archive.tgz");
-        let timestamp = systemtime_to_timestamp(SystemTime::now());
+        let robots = Self::fetch_robots(host).await?;
+        let db = Self::open_db(local_path.clone())?;
+        let frontier = PriorityQueue::init(db.clone(), "cf_frontier")?;
+        let last_visit = KvTable::init(db.clone(), "cf_last_visit")?;
+        let host = host.clone();
 
-        self.receiver.0.save()?;
+        Ok(DomainState { local_path, remote_path, host, robots, db, frontier, last_visit })
+    }
 
-        create_archive(&self.local_path, &temp_path).await?;
+    pub async fn create_checkpoint<O>(&mut self, output_path:O) -> Result<()>
+    where
+        O: AsRef<Path> + Debug
+    {
+        self.db.flush()?;
+
+        create_archive(&self.local_path, &output_path).await?;
     
-        let (multipart_id, mut writer) = self.object_store.put_multipart(&object_path).await?;
-        let bytes_written = write_multipart_file(multipart_id, &mut writer, &temp_path).await?;
+        Ok(())
+    }
 
+    /**
+     * Get a path to a remote checkpoint file
+     */
+    fn get_remote_checkpoint_path(&self) -> PathBuf 
+    {
+        let token = Uuid::new_v4().to_string();
+        let mut remote_path = self.remote_path.clone();
+        remote_path.push(format!("checkpoint-{}.tgz", token));
+        remote_path
+    }
+
+    /**
+     * Upload a checkpoint to remote storage
+     * 
+     * * `object_store` - The object store to upload to
+     * * `input_path` - The path to the checkpoint file to upload
+     * * `output_path` - The remote path to the checkpoint file to upload
+     */
+    pub(crate) async fn upload_checkpoint<I,O>(object_store: &Arc<dyn ObjectStore>,
+                                               input_path:I, 
+                                               output_path:O) -> Result<u64>
+    where
+        O: AsRef<Path> + Debug,
+        I: AsRef<Path> + Debug
+    {
+        let input_path = input_path.as_ref().to_string_lossy().to_string();
+        let object_path: object_store::path::Path = input_path.try_into().unwrap();
+
+        let (multipart_id, mut writer) = object_store.put_multipart(&object_path).await?;
+        let bytes_written = write_multipart_file(multipart_id, &mut writer, output_path).await?;
+
+        Ok(bytes_written)
+    }
+
+    pub(crate) async fn commit_checkpoint<O>(log: Arc<TransactionLog>,
+                                             output_path:O,
+                                             bytes_written: u64) -> Result<storelib::protocol::Commit> 
+    where
+        O: AsRef<Path> + Debug
+    {  
+        let timestamp = systemtime_to_timestamp(SystemTime::now());
+   
         let tile_file = storelib::protocol::TileFiles {
             tile: None, // for now, the frontier doesn't use tiles
             file: vec![storelib::protocol::File {
-                file_path: object_path.to_string(),
+                file_path: output_path.as_ref().to_string_lossy().to_string(),
                 file_type: storelib::protocol::FileType::Blob as i32,
                 file_size: bytes_written,
                 update_time: timestamp,
             }],
         };
 
-        let head_id = self.log.head_id_mainline().await?;
-        let commit = self.log.create_commit(&head_id,
+        let head_id = log.head_id_mainline().await
+            .map_err(|err| Error::FailedCommit(Box::new(err)))?;
+
+        let commit = log.create_commit(&head_id,
             Some(calico_shared::applications::CRAWLER.to_string()),
             Some(calico_shared::applications::CRAWLER.to_string()),
             Some("Frontier Checkpoint".to_string()),
             timestamp,
             vec![],
             vec![],
-            vec![tile_file]).await?;
+            vec![tile_file]).await
+            .map_err(|err| Error::FailedCommit(Box::new(err)))?;
 
-        let _new_head = self.log.fast_forward(MAINLINE, &commit.commit_id).await.unwrap();
+        let _new_head = log.fast_forward(MAINLINE, &commit.commit_id).await
+            .map_err(|err| Error::CommitCollision(Box::new(err)))?;
+
 
         Ok(commit.commit)
     }
-}
 
-#[derive(Clone, Debug)]
-pub struct LastVisitStore {
-    store: kv::Store
-}
+    pub async fn checkpoint(&mut self,
+                            object_store: Arc<dyn ObjectStore>,
+                            log: Arc<TransactionLog>) -> Result<storelib::protocol::Commit> {
+        // todo: shouldn't be assuming we can use tempdir for temporary storage here
+        let temp = tempdir().unwrap();
+        let temp_path = temp.path().join("frontier_archive.tgz");
 
-impl LastVisitStore {
-    pub fn init_local(path: &Path) -> CalicoResult<LastVisitStore> {
-        let cfg = kv::Config::new(path);
-        let store = kv::Store::new(cfg)?;
+        let remote_path = self.get_remote_checkpoint_path();
+        self.create_checkpoint(&temp_path).await?;
 
-        Ok(LastVisitStore {
-            store
-        })
-    }
+        let bytes_written = Self::upload_checkpoint(&object_store, &temp_path, &remote_path).await?;
 
-    pub fn set(&mut self, path: &String, last_visit: protocol::LastVisit) -> CalicoResult<()>{
-        let expected_len = last_visit.encoded_len();
+        let commit = Self::commit_checkpoint(log, &remote_path, bytes_written).await?;
 
-        let mut buf = Vec::with_capacity(6);
-        last_visit.encode(&mut buf)?;
-        assert_eq!(expected_len, buf.len());
-
-        let value = kv::Raw::from(buf);
-
-        let bucket = self.store.bucket::<String, kv::Raw>(Some("last_visit"))?;
-        bucket.set(&path, &value)?;
-
-        Ok(())
-    }
-
-    pub fn contains(&mut self, path: &String) -> CalicoResult<bool> {
-        let bucket = self.store.bucket::<String, kv::Raw>(Some("last_visit"))?;
-        Ok(bucket.contains(path)?)
+        Ok(commit)
     }
 }
 
@@ -356,11 +532,10 @@ impl LastVisitStore {
 mod tests {
     use std::{time::{Duration, Instant, SystemTime, UNIX_EPOCH}, cmp::max, sync::Arc};
 
-    use crate::fetch::state::{FrontierStore, generate_lossy_key};
+    use crate::fetch::state::{generate_lossy_key, DomainState};
 
-    use super::{LastVisitStore, PriorityQueue};
+    use super::*;
     use acquisition::protocol;
-    use object_store::{local::LocalFileSystem, ObjectStore};
     use rand::{distributions::Alphanumeric, thread_rng, Rng};
     use tempfile::tempdir;
     use fs_extra::dir::get_size;
@@ -386,7 +561,6 @@ mod tests {
                     let next_url = std::str::from_utf8(&item).unwrap().to_string();
                     count += 1;
                     url = max(url, next_url);
-                    item.commit().unwrap();
                 },
                 Err(_) => todo!(),
             }
@@ -407,7 +581,9 @@ mod tests {
     async fn priority_enqueue_dequeue_speedrun() {
         let temp = tempdir().unwrap();
 
-        let mut frontier = PriorityQueue::init(temp.path()).unwrap();
+        let db = DomainState::open_db(temp.path()).unwrap();
+        let mut frontier = PriorityQueue::init(db.clone(), "cf_frontier").unwrap();
+
         let num_urls = 100_000;
 
         let start = Instant::now();
@@ -469,7 +645,9 @@ mod tests {
     #[tokio::test]
     async fn last_visit_set_get_speedrun() {
         let temp = tempdir().unwrap();
-        let mut store = LastVisitStore::init_local(&temp.path()).unwrap();
+        let db = DomainState::open_db(temp.path()).unwrap();
+        let mut store = KvTable::init(db.clone(), "cf_last_visit").unwrap();
+
         let rand_string: String = thread_rng()
             .sample_iter(&Alphanumeric)
             .take(50)
@@ -479,14 +657,13 @@ mod tests {
         let start = Instant::now();
         for i in 1..100_001 {
             let last_visit = protocol::LastVisit {
-                added_to_frontier: i,
-                fetched: None,
-                status_code: None
+                added_to_frontier: true,
+                ..Default::default()
             };
 
             let path = format!("/{}/{:06}", rand_string, i);
 
-            store.set(&path, last_visit).unwrap();
+            store.put_message(&path, &last_visit).unwrap();
         }
         let folder_size = get_size(temp.path()).unwrap();
         assert!(start.elapsed() < Duration::from_secs(5));
@@ -500,186 +677,6 @@ mod tests {
             folder_size as f32 / (start.elapsed().as_millis() as f32 * 1000.),
             folder_size as f32 / 100_000.
         );
-    }
-
-    #[tokio::test]
-    async fn try_sled() {
-        let temp = tempdir().unwrap();
-        let tree = sled::open(temp).unwrap();
-
-        let inputs = vec![(3u64, "fire"), (1,"hi"), (2, "test"), (1, "mom"),];
-        for (pri, value) in inputs {
-            let id = tree.generate_id().unwrap();
-            let mut key = [0u8;16];
-
-            println!("PRI {:?}", pri.to_be_bytes());
-            println!("ID  {:?}", id.to_be_bytes());
-
-            key[..8].clone_from_slice(&pri.to_be_bytes());
-            key[8..16].clone_from_slice(&id.to_be_bytes());
-
-            tree.insert(key, value).unwrap();
-        }
-
-        while let Ok(Some(item)) = tree.pop_min() {
-            println!("ITEM: {:?}", item);
-        }
-    }
-
-    #[tokio::test]
-    async fn stress_sled() {
-        let temp = tempdir().unwrap();
-        let tree = sled::open(&temp).unwrap();
-        let num = 100_000;
-
-        let start = Instant::now();
-        for _ in 1..num+1 {
-            let rand_string: String = thread_rng()
-                .sample_iter(&Alphanumeric)
-                .take(60)
-                .map(char::from)
-                .collect();
-
-//            let pri: u64 = thread_rng().gen_range(1..11);
-            let pri: u64 = thread_rng().gen_range(1..11);
-            let id = tree.generate_id().unwrap();
-            let mut key = [0u8;16];
-
-            key[..8].clone_from_slice(&pri.to_be_bytes());
-            key[8..16].clone_from_slice(&id.to_be_bytes());
-
-            tree.insert(key, rand_string.as_bytes()).unwrap();
-        }
-        tree.flush().unwrap();
-        let folder_size = get_size(temp.path()).unwrap();
-
-        println!("Write URLs: {} ({:.2} kUrl/s)", 
-            num, 
-            num as f32 / start.elapsed().as_millis() as f32);
-        println!("Write size: {:.2} ({:.2} mb/s)", 
-            folder_size as f32 / 1_000_000., 
-            (folder_size as f32 / 1_000.) / start.elapsed().as_millis() as f32);
-
-        let mut url = "".to_string();
-        let mut count = 0;
-        
-        let start = Instant::now();
-        while let Ok(Some(item)) = tree.pop_min() {
-            let next_url = std::str::from_utf8(&item.1).unwrap().to_string();
-            count += 1;
-            url = max(url, next_url)
-        }
-        println!("Read URLs: {} ({:.2} kUrl/s)", 
-            count, 
-            count as f32 / start.elapsed().as_millis() as f32);
-
-    }
-
-    fn id_merge_operator(
-        _key: &[u8],               // the key being merged
-        old_value: Option<&[u8]>,  // the previous value, if one existed
-        operands: &rocksdb::MergeOperands
-    ) -> Option<Vec<u8>> {       // set the new value, return None to delete
-        let mut current = old_value
-          .map(|ov| u64::from_be_bytes(ov[0..8].try_into().expect("incorrect size")))
-          .unwrap_or_else(|| 0);
-      
-        for op in operands {
-            current += u64::from_be_bytes(op[0..8].try_into().expect("incorrect size"));
-        }
-        Some(current.to_be_bytes().to_vec())
-    }
-    #[tokio::test]
-    async fn try_rocks() {
-        let temp = tempdir().unwrap();
-        let mut opts = rocksdb::Options::default();
-
-        opts.create_if_missing(true);
-        opts.set_merge_operator_associative("test operator", id_merge_operator);
-
-        let db = rocksdb::DB::open(&opts, temp).unwrap();
-
-        let mask:u128 = (1 << 96) - 1;
-
-        println!("MASK = {:?}", mask.to_be_bytes());
-        let inputs = vec![(3u32, "fire"), (1,"hi"), (2, "test"), (1, "mom"),];
-        let id:u128 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();    
-        println!("TIMENANO = {:?}", id.to_be_bytes());
-        for (pri, value) in inputs {
-        
-            let id:u128 = (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() & mask).try_into().unwrap();    
-
-            let mut key = [0u8;16];
-
-            println!("PRI {:?}", pri.to_be_bytes());
-            println!("ID  {:?}", id.to_be_bytes());
-
-            key[..4].clone_from_slice(&pri.to_be_bytes());
-            key[4..16].clone_from_slice(&id.to_be_bytes()[4..16]);
-            println!("KEY  {:?}", key);
-
-            db.put(key, value.as_bytes()).unwrap();
-        }
-
-        let iter = db.iterator(rocksdb::IteratorMode::Start); // Always iterates forward
-        for item in iter {
-            let (key, value) = item.unwrap();
-            println!("ITEM: {:?}", key);
-            db.delete(key).unwrap();    
-        }
-    }
-
-    #[tokio::test]
-    async fn stress_rocks() {
-        let temp = tempdir().unwrap();
-        let db = rocksdb::DB::open_default(&temp).unwrap();
-        let num = 100_000;
-        let mask:u128 = (1 << 96) - 1;
-
-        let start = Instant::now();
-        for _ in 1..num+1 {
-            let rand_string: String = thread_rng()
-                .sample_iter(&Alphanumeric)
-                .take(60)
-                .map(char::from)
-                .collect();
-
-//            let pri: u64 = thread_rng().gen_range(1..11);
-            let pri: u32 = thread_rng().gen_range(1..11);
-            let id:u128 = (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() & mask).try_into().unwrap();    
-            let mut key = [0u8;16];
-
-            key[..4].clone_from_slice(&pri.to_be_bytes());
-            key[4..16].clone_from_slice(&id.to_be_bytes()[4..16]);
-
-            db.put(key, rand_string.as_bytes()).unwrap();
-        }
-        db.flush().unwrap();
-        let folder_size = get_size(temp.path()).unwrap();
-
-        println!("Write URLs: {} ({:.2} kUrl/s)", 
-            num, 
-            num as f32 / start.elapsed().as_millis() as f32);
-        println!("Write size: {:.2} ({:.2} mb/s)", 
-            folder_size as f32 / 1_000_000., 
-            (folder_size as f32 / 1_000.) / start.elapsed().as_millis() as f32);
-
-        let mut url = "".to_string();
-        let mut count = 0;
-        
-        let start = Instant::now();
-        let iter = db.iterator(rocksdb::IteratorMode::Start); // Always iterates forward
-        for item in iter {
-            let (key, value) = item.unwrap();
-            let next_url = std::str::from_utf8(&value).unwrap().to_string();
-            count += 1;
-            url = max(url, next_url);
-            db.delete(key).unwrap();    
-        }
-        println!("Read URLs: {} ({:.2} kUrl/s)", 
-            count, 
-            count as f32 / start.elapsed().as_millis() as f32);
-
     }
 }
 

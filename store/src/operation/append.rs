@@ -1,11 +1,12 @@
 use std::fmt;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::physical_plan::{SendableRecordBatchStream};
 
-use crate::datatypes::datetime_to_timestamp;
+use crate::datatypes::systemtime_to_timestamp;
 use crate::log::MAINLINE;
 use crate::table::TableStore;
 use crate::protocol;
@@ -112,7 +113,7 @@ impl Operation<protocol::Commit> for AppendOperation {
     
         let timestamp = match self.timestamp {
             Some(ts) => ts,
-            None => datetime_to_timestamp(&chrono::offset::Utc::now())
+            None => systemtime_to_timestamp(&SystemTime::now())
         };
     
         let mut all_tile_files = vec![];

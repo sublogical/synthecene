@@ -3,10 +3,6 @@ name = "acquisition"
 version = "0.1.0"
 edition = "2021"
 
-[lib]
-lib = "acquisition_lib"
-path = "src/lib.rs"
-
 [[bin]]
 name = "crawler"
 path = "src/crawler.rs"
@@ -24,18 +20,18 @@ futures-util = "0.3"
 itertools = "0.10"
 num = "0.4"
 object_store = "0.5.1"
+ouroboros = "0.15"
 prost = "0.11.0"
 prost-types = "0.11.0"
 rand = "0.8"
 reqwest = "0.11"
+result = "1"
 robotstxt = "0.3"
 rocksdb = { version = "0.19", features = ["multi-threaded-cf"] }
 scraper = "0.14"
-sled = "0.34"
 tempfile = "3.3"
 tokio = { version = "1", features = ["full"] }
 uuid = "1.2"
-yaque = "0.6"
 
 
 [dev-dependencies]

@@ -3,9 +3,18 @@ syntax = "proto3";
 package indigo.protocol;
 
 message LastVisit {
-    uint64 added_to_frontier = 1;
-    optional uint64 fetched = 2;
+    bool added_to_frontier = 1;
+    optional uint64 fetched_at = 2;
     optional uint32 status_code = 3;
+}
+
+enum RequestType {
+    Page = 0;
+    Sitemap = 1;
+}
+message CaptureRequest {
+    string path = 1;
+    RequestType capture_type = 2;
 }
 
 message Host {

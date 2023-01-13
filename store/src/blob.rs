@@ -1,6 +1,6 @@
+use std::io;
 use std::{fs::File, pin::Pin};
 use std::path::Path;
-use calico_shared::result::CalicoResult;
 use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
@@ -11,7 +11,7 @@ use futures::stream::StreamExt;
 use tokio::io::{AsyncWrite, AsyncWriteExt, AsyncReadExt};
 use bytes::Bytes;
 
-pub async fn create_archive<I: AsRef<Path>, O: AsRef<Path>>(directory: I, serialized_path: O) -> CalicoResult<()>{
+pub async fn create_archive<I: AsRef<Path>, O: AsRef<Path>>(directory: I, serialized_path: O) -> io::Result<()>{
     let tar_gz = File::create(serialized_path)?;
     let enc = GzEncoder::new(tar_gz, Compression::default());
     let mut tar = tar::Builder::new(enc);
@@ -19,7 +19,7 @@ pub async fn create_archive<I: AsRef<Path>, O: AsRef<Path>>(directory: I, serial
     Ok(())
 }
 
-pub async fn open_archive<I: AsRef<Path>, O: AsRef<Path>>(serialized_path: I, directory: O)  -> CalicoResult<()>{
+pub async fn open_archive<I: AsRef<Path>, O: AsRef<Path>>(serialized_path: I, directory: O)  -> io::Result<()>{
     let tar_gz = File::open(serialized_path)?;
     let tar = GzDecoder::new(tar_gz);
     let mut archive = Archive::new(tar);
@@ -28,7 +28,12 @@ pub async fn open_archive<I: AsRef<Path>, O: AsRef<Path>>(serialized_path: I, di
 }
 
 
-pub async fn write_multipart_file(_multipart_id: String, writer: &mut Box<dyn AsyncWrite + Unpin + Send>, path: &Path) -> CalicoResult<u64>{
+pub async fn write_multipart_file<I>(_multipart_id: String,
+                                     writer: &mut Box<dyn AsyncWrite + Unpin + Send>, 
+                                     path: I) -> io::Result<u64>
+where
+    I: AsRef<Path>
+{
     let mut f = tokio::fs::File::open(path).await?;
     let mut buffer = [0u8; 10_000];
     let mut bytes_written = 0;
@@ -47,7 +52,7 @@ pub async fn write_multipart_file(_multipart_id: String, writer: &mut Box<dyn As
     Ok(bytes_written.try_into().expect("uploaded greater than u64?"))
 }
 
-pub async fn read_stream_file<O: AsRef<Path>>(reader: &mut Pin<Box<dyn Stream<Item = Result<Bytes, ObjectStoreError>> + Send>>, path: O) -> CalicoResult<()> {
+pub async fn read_stream_file<O: AsRef<Path>>(reader: &mut Pin<Box<dyn Stream<Item = Result<Bytes, ObjectStoreError>> + Send>>, path: O) -> io::Result<()> {
     let mut f = tokio::fs::File::create(path).await?;
 
     while let Some(result) = reader.next().await {

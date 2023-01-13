@@ -1,6 +1,6 @@
 use std::time::{SystemTime, Instant, UNIX_EPOCH};
 
-use calico_shared::result::{CalicoResult, CalicoError};
+use calico_shared::result::CalicoResult;
 use acquisition::protocol;
 use reqwest;
 use robotstxt::DefaultMatcher;
@@ -11,7 +11,7 @@ pub mod smarts;
 pub mod state;
 pub mod task;
 
-fn full_url(host: &protocol::Host, relative_url: &String) -> String{
+fn full_url(host: &protocol::Host, relative_url: &str) -> String{
 
     let scheme = match &host.scheme {
         Some(scheme) => scheme.clone(),
@@ -38,52 +38,31 @@ pub struct Capture {
     /// Content-length in bytes
     content_length: u64,
 
-    status: u16,
+    status_code: u32,
 
     /// Unique list of links on the page, unscored, sorted by first appearance
     outlinks: Vec<String>
 }
 
 
-struct DomainState {
-    host: protocol::Host,
-    robots: Option<String>,
-    ms_since_last_fetch: u64,
-    fetch_rate_ms: u64
-}
-
-impl DomainState {
-    async fn for_domain(host: &protocol::Host, fetch_rate_ms: u64) -> CalicoResult<DomainState> {
-        let url = full_url(host, &"/robots.txt".to_string());
-        let robots = inner_retrieve(url).await.map(|robots_capture| robots_capture.body).ok();
-
-        Ok(DomainState {
-            host: host.clone(),
-            robots,
-            ms_since_last_fetch: 0,
-            fetch_rate_ms
-        })
-    }
-
-}
-
 const INDIGO_USER_AGENT: &str = r"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/600.2.5 (KHTML\, like Gecko) Version/8.0.2 Safari/600.2.5 (Panubot/0.1; +https://developer.panulirus.com/support/panubot)";
 
-async fn retrieve(state: &mut DomainState, url: String) -> CalicoResult<Capture> {
+fn robots_filter(robots: &Option<String>, url: &str) -> bool {
     // Step 1. Determine whether we're allowed to crawl this site
-    match &state.robots {
+    match &robots {
         Some(robots_txt) => {
             let mut matcher = DefaultMatcher::default();
             if !matcher.one_agent_allowed_by_robots(robots_txt, INDIGO_USER_AGENT, &url) {
-                return Err(CalicoError::RobotForbidden)
+                false
+            } else {
+                true
             }
         },
-        None => {}
+        None => { true }
     }
-    Ok(inner_retrieve(url).await?)
 }
 
-async fn inner_retrieve(url: String) -> CalicoResult<Capture> {
+async fn retrieve(url: String) -> CalicoResult<Capture> {
     let fetched_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("Should always be able to get time since EPOCH")
@@ -94,7 +73,7 @@ async fn inner_retrieve(url: String) -> CalicoResult<Capture> {
     let start = Instant::now();
     let resp = reqwest::get(url).await?;
     let content_length = resp.content_length();
-    let status = resp.status().as_u16();
+    let status_code:u32 = resp.status().as_u16().into();
     
     let body = resp.text().await?;
     let content_length = content_length.unwrap_or(body.len().try_into()
@@ -107,7 +86,7 @@ async fn inner_retrieve(url: String) -> CalicoResult<Capture> {
         body,
         fetch_time,
         content_length,
-        status,
+        status_code,
         outlinks,
         fetched_at
     })
@@ -128,14 +107,15 @@ fn extract_links(text: &String) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, time::{Instant, Duration}};
+    use std::{path::{PathBuf, Path}, time::{Instant, Duration}};
 
     use mockito;
     use mockito::{mock, Mock, Matcher};
     use rand::{thread_rng, Rng};
     use rand::distributions::Alphanumeric;
+    use tempfile::tempdir;
 
-    use crate::fetch::*;
+    use crate::fetch::{*, state::DomainState};
 
     pub fn mockito_host() -> protocol::Host{
         let address = mockito::server_address();
@@ -208,46 +188,45 @@ mod tests {
             .create();
         let url = format!("{}/hello", host);
 
-        let capture = inner_retrieve(url).await.unwrap();
+        let capture = retrieve(url).await.unwrap();
 
         assert_eq!(capture.body, "world");
     }
     #[tokio::test]
     async fn test_yes_robots() {
+        let temp = tempdir().unwrap();
         let _m = [
             with_friendly_robots(),
             with_text("/hello", "world")
         ];
+        let remote_path = Path::new("crawler_state");
 
-        let mut state = DomainState::for_domain(&mockito_host(), 0).await.unwrap();
-        let capture = retrieve(&mut state, url("/hello")).await.unwrap();
-        assert_eq!(capture.body, "world");
+        let state = DomainState::init(&mockito_host(), temp.path(), remote_path).await.unwrap();
+        assert!(robots_filter(&state.robots, &url("/hello")));
     }
     #[tokio::test]
     async fn test_no_robots() {
+        let temp = tempdir().unwrap();
         let _m = [
             with_unfriendly_robots(),
             with_text("/hello", "world")
         ];
+        let remote_path = Path::new("crawler_state");
 
-        let mut state = DomainState::for_domain(&mockito_host(), 0).await.unwrap();
-        let res = retrieve(&mut state, url("/hello")).await;
-        assert!(matches!(res, Err(CalicoError::RobotForbidden)));
+        let state = DomainState::init(&mockito_host(), temp.path(), remote_path).await.unwrap();
+        assert!(!robots_filter(&state.robots, &url("/hello")));
     }
     #[tokio::test]
     async fn test_link_farm() {
         let _m = [
-            with_friendly_robots(),
             with_spider_trap()
         ];
-
-        let mut state = DomainState::for_domain(&mockito_host(), 0).await.unwrap();
 
         let now = Instant::now();
 
         let mut path = "/req/abc".to_string();
         for _ in 1..101 {
-            let capture = retrieve(&mut state, url(&path)).await.unwrap();
+            let capture = retrieve(url(&path)).await.unwrap();
         
             path = capture.outlinks[0].clone();
         }
