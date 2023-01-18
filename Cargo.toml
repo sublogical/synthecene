@@ -2,11 +2,7 @@
 
 members = [
     "acquisition",
-    "annotate",
-    "index",
-    "model",
+    "retrieve",
     "shared",
-    "signal",
-    "sim",
     "store",
 ]
