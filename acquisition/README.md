@@ -4,8 +4,9 @@ sudo apt-install libssl-dev libclang-dev
 
 ### TODO: Crawler
 * state
-  * store periodic checkpoints in object store
   * downloading existing state at start of task
+  * only store checkpoints when they are big enough
+  * ~~store periodic checkpoints in object store~~
   * ~~test using rocksdb vs yaque~~
   * ~~priority queue for rocksdb~~
   * ~~proto serialization for priority queue~~
@@ -21,7 +22,8 @@ sudo apt-install libssl-dev libclang-dev
 * fetch object
   * sitemaps support
   * enforce fetch rate
-  * support parallel single host fetch
+  * normalize URLs properly
+  * partition inlinks and outlinks
   * ~~support basic fetch~~
   * ~~extract urls~~
   * ~~support robots.txt~~
@@ -30,14 +32,18 @@ sudo apt-install libssl-dev libclang-dev
   * link
   * capture to proto
   * host to proto?
-* domain state
-  * track fetch rate
-  * send domain state to object store
-* capture state
+* capture
+  * accumulate pages for domain
+  * accumulate outlinks for domain
   * send page batch to object store
-  * send page batch notification to object store
+  * send page batch notification to kafka
   * send page to kafka
+  * send outlinks batch to object store
+  * send outlinks notification to kafka
+  * send outlinks to kafka
 * deep crawl task
+  * support parallel single host fetch
+  * track fetch rate
   * track fetch telemetry - status distribution
   * ~~build domain frontier~~
   * ~~build domain last visit map~~
@@ -69,10 +75,16 @@ sudo apt-install libssl-dev libclang-dev
   * scheduled tasks
   * task SLO
 * smarts
+  * implement normalization of URLs
   * predict most useful seed pages per domain
   * predict utility of url
   * predict utility of page
   * detect spider trap
+### TODO: Task Server
+* Active Task
+  * Get task API
+  * List task API
+  
 
 ### TODO: Importer
 * Datasets

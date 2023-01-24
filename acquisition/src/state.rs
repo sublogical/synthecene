@@ -1,7 +1,9 @@
 use calico_shared::types::systemtime_to_timestamp;
-use prost::bytes::{Buf, Bytes};
+use log::debug;
+use prost::bytes::Bytes;
 use rand::RngCore;
 use storelib::blob::{create_archive, write_multipart_file, read_stream_file, open_archive};
+use tokio::fs;
 use std::fmt::Debug;
 use std::io;
 use std::marker::PhantomData;
@@ -16,9 +18,9 @@ use uuid::Uuid;
 use object_store::ObjectStore;
 use object_store::path::Path as ObjectStorePath;
 
-use acquisition::protocol;
+use crate::protocol;
 
-use super::{full_url, retrieve};
+use crate::fetch::{full_url, retrieve};
 
 // This generates an efficient but lossy key:
 // - no guarantee of ordering in a distribute system
@@ -45,7 +47,7 @@ fn generate_lossy_key(priority: u8) -> [u8;16] {
 
 #[derive(Debug)]
 pub enum Error {
-    ImproperCheckpointCommit(String),
+    _ImproperCheckpointCommit(String),
     FailedCommit(Box<dyn std::error::Error>),
     CommitCollision(Box<dyn std::error::Error>),
 
@@ -177,7 +179,7 @@ impl PriorityQueue {
      *
      * Note that this iterator will destroy the entries as it iterates over them. If you wish to save an entry, call `save` on the `ItemGuard` before dropping it.
      */
-    pub fn iter<'db : 'iter, 'iter>(&'db mut self) -> PriorityQueueIterator<'iter> {
+    pub fn _iter<'db : 'iter, 'iter>(&'db mut self) -> PriorityQueueIterator<'iter> {
         let iter = self.0.iterator_cf(&self.cf(), rocksdb::IteratorMode::Start); // Always iterates forward
         PriorityQueueIterator { iter, db: self.0.clone(), cf: self.1.clone() }
     }
@@ -260,7 +262,7 @@ impl KvTable {
     /**
      * Get a value from the table returning raw bytes
      */
-    pub fn get<K,V>(&self, key: K) -> Result<Option<Vec<u8>>>
+    pub fn _get<K,V>(&self, key: K) -> Result<Option<Vec<u8>>>
     where
         K: AsRef<[u8]>
     {
@@ -270,7 +272,7 @@ impl KvTable {
     /**
      * Get a message from the table, decoding it with prost
      */
-    pub fn get_message<K,T>(&self, key: K) -> Result<Option<T>>
+    pub fn _get_message<K,T>(&self, key: K) -> Result<Option<T>>
     where
         K: AsRef<[u8]>,
         T : prost::Message + Default
@@ -361,25 +363,25 @@ impl DomainState {
         Ok(Arc::new(rocksdb::DB::open_cf_descriptors(&db_opts, path, vec![cf_frontier, cf_last_visit])?))
     }
 
-    pub(crate) async fn download_checkpoint<O>(object_store: Arc<dyn ObjectStore>,
+    pub(crate) async fn _download_checkpoint<O>(object_store: Arc<dyn ObjectStore>,
                                                commit: &Commit<'_>,
                                                output_path:O) -> Result<()>
     where
         O: AsRef<Path> + Debug
     {
         if commit.tile_files.len() != 1 {
-            return Err(Error::ImproperCheckpointCommit("Checkpoints should have exactly 1 tile".to_string()));
+            return Err(Error::_ImproperCheckpointCommit("Checkpoints should have exactly 1 tile".to_string()));
         }
     
         let tile_file = commit.tile_files.get(0).unwrap();
         if tile_file.file.len() != 1 {
-            return Err(Error::ImproperCheckpointCommit("Checkpoints should have exactly 1 file".to_string()));
+            return Err(Error::_ImproperCheckpointCommit("Checkpoints should have exactly 1 file".to_string()));
         }
     
         let file = tile_file.file.get(0).unwrap();
     
         if file.file_type != storelib::protocol::FileType::Blob as i32 {
-            return Err(Error::ImproperCheckpointCommit("Checkpoints should always be type BLOB".to_string()));
+            return Err(Error::_ImproperCheckpointCommit("Checkpoints should always be type BLOB".to_string()));
         }
     
         let object_path: ObjectStorePath = file.file_path.clone().try_into().unwrap();
@@ -398,7 +400,7 @@ impl DomainState {
         let download_archive_path = temp.path().join("download_archive.tgz");
  */
 
-    pub(crate) async fn open_checkpoint<I, O>(input_path:I, output_path:I) -> Result<()>
+    pub(crate) async fn _open_checkpoint<I, O>(input_path:I, output_path:I) -> Result<()>
     where
         O: AsRef<Path> + Debug,
         I: AsRef<Path> + Debug
@@ -462,11 +464,11 @@ impl DomainState {
         O: AsRef<Path> + Debug,
         I: AsRef<Path> + Debug
     {
-        let input_path = input_path.as_ref().to_string_lossy().to_string();
-        let object_path: object_store::path::Path = input_path.try_into().unwrap();
+        let output_path = output_path.as_ref().to_string_lossy().to_string();
+        let object_path: object_store::path::Path = output_path.try_into().unwrap();
 
         let (multipart_id, mut writer) = object_store.put_multipart(&object_path).await?;
-        let bytes_written = write_multipart_file(multipart_id, &mut writer, output_path).await?;
+        let bytes_written = write_multipart_file(multipart_id, &mut writer, input_path).await?;
 
         Ok(bytes_written)
     }
@@ -519,23 +521,35 @@ impl DomainState {
         let remote_path = self.get_remote_checkpoint_path();
         self.create_checkpoint(&temp_path).await?;
 
+        debug!("Created archive with {}", fs::metadata(&temp_path).await?.len());
+
+        debug!("Uploading checkpoint from {} to {}", temp_path.to_string_lossy(), remote_path.to_string_lossy());
         let bytes_written = Self::upload_checkpoint(&object_store, &temp_path, &remote_path).await?;
 
+        debug!("Committing checkpoint to {}", remote_path.to_string_lossy());
         let commit = Self::commit_checkpoint(log, &remote_path, bytes_written).await?;
 
         Ok(commit)
+    }
+
+    pub async fn maybe_checkpoint(&mut self,
+        object_store: Arc<dyn ObjectStore>,
+        log: Arc<TransactionLog>) -> Result<storelib::protocol::Commit> {
+        
+        // todo: determine if we should bother checkpointing
+        self.checkpoint(object_store, log).await
     }
 }
 
 
 #[cfg(test)]
 mod tests {
-    use std::{time::{Duration, Instant, SystemTime, UNIX_EPOCH}, cmp::max, sync::Arc};
+    use std::{time::{Duration, Instant }, cmp::max };
 
-    use crate::fetch::state::{generate_lossy_key, DomainState};
+    use crate::state::{generate_lossy_key, DomainState};
 
     use super::*;
-    use acquisition::protocol;
+    use crate::protocol;
     use rand::{distributions::Alphanumeric, thread_rng, Rng};
     use tempfile::tempdir;
     use fs_extra::dir::get_size;
@@ -555,7 +569,7 @@ mod tests {
         let mut url = "".to_string();
         let mut count = 0;
 
-        for item in frontier.iter() {
+        for item in frontier._iter() {
             match item {
                 Ok(item) => {
                     let next_url = std::str::from_utf8(&item).unwrap().to_string();

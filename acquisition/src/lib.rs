@@ -10,5 +10,3 @@ macro_rules! PATH_SEPARATOR {() => (
 pub mod protocol {
     include!(concat!(env!("OUT_DIR"), PATH_SEPARATOR!(), "indigo.protocol.rs"));
 }
-
-mod telemetry;

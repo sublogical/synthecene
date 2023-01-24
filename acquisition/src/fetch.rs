@@ -1,17 +1,14 @@
 use std::time::{SystemTime, Instant, UNIX_EPOCH};
 
 use calico_shared::result::CalicoResult;
-use acquisition::protocol;
+use crate::protocol;
+use crate::smarts;
+use itertools::Itertools;
 use reqwest;
 use robotstxt::DefaultMatcher;
 use scraper::{Html, Selector};
 
-pub mod controller;
-pub mod smarts;
-pub mod state;
-pub mod task;
-
-fn full_url(host: &protocol::Host, relative_url: &str) -> String{
+pub fn full_url(host: &protocol::Host, relative_url: &str) -> String{
 
     let scheme = match &host.scheme {
         Some(scheme) => scheme.clone(),
@@ -20,34 +17,37 @@ fn full_url(host: &protocol::Host, relative_url: &str) -> String{
 
     match host.port {
         Some(port) => format!("{}://{}:{}{}", scheme, host.hostname, port, relative_url),
-        None => format!("{}//{}{}", scheme, host.hostname, relative_url),
+        None => format!("{}://{}{}", scheme, host.hostname, relative_url),
     }
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct Capture {
     // raw HTML body of page
-    body: String,
+    pub body: String,
 
     /// Time the fetch was started, in ms since epoch
-    fetched_at: u64,
+    pub fetched_at: u64,
 
     /// Time the fetch took to return, in ms
-    fetch_time: u64,
+    pub fetch_time: u64,
 
     /// Content-length in bytes
-    content_length: u64,
+    pub content_length: u64,
 
-    status_code: u32,
+    pub status_code: u32,
 
     /// Unique list of links on the page, unscored, sorted by first appearance
-    outlinks: Vec<String>
+    pub inlinks: Vec<String>,
+
+    /// Unique list of links on the page, unscored, sorted by first appearance
+    pub outlinks: Vec<String>
 }
 
 
 const INDIGO_USER_AGENT: &str = r"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/600.2.5 (KHTML\, like Gecko) Version/8.0.2 Safari/600.2.5 (Panubot/0.1; +https://developer.panulirus.com/support/panubot)";
 
-fn robots_filter(robots: &Option<String>, url: &str) -> bool {
+pub fn robots_filter(robots: &Option<String>, url: &str) -> bool {
     // Step 1. Determine whether we're allowed to crawl this site
     match &robots {
         Some(robots_txt) => {
@@ -62,7 +62,7 @@ fn robots_filter(robots: &Option<String>, url: &str) -> bool {
     }
 }
 
-async fn retrieve(url: String) -> CalicoResult<Capture> {
+pub async fn retrieve(url: String) -> CalicoResult<Capture> {
     let fetched_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("Should always be able to get time since EPOCH")
@@ -71,7 +71,7 @@ async fn retrieve(url: String) -> CalicoResult<Capture> {
         .expect("It's ok if this code stops working in 584M years, really");
 
     let start = Instant::now();
-    let resp = reqwest::get(url).await?;
+    let resp = reqwest::get(&url).await?;
     let content_length = resp.content_length();
     let status_code:u32 = resp.status().as_u16().into();
     
@@ -80,13 +80,22 @@ async fn retrieve(url: String) -> CalicoResult<Capture> {
         .expect("Should never take more than 584M years to request a web page"));
 
     let fetch_time = start.elapsed().as_millis().try_into().unwrap();
-    let outlinks = extract_links(&body);
+    let links = extract_links(&body);
+    // todo: move this above the fetch
+    let url = reqwest::Url::parse(&url).expect("this would have already failed");
+
+    let links:Vec<_> = links.into_iter()
+        .unique()
+        .collect();
+
+    let (inlinks, outlinks) = smarts::normalize_links(url, &links);
 
     Ok(Capture {
         body,
         fetch_time,
         content_length,
         status_code,
+        inlinks,
         outlinks,
         fetched_at
     })
@@ -106,7 +115,7 @@ fn extract_links(text: &String) -> Vec<String> {
 
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use std::{path::{PathBuf, Path}, time::{Instant, Duration}};
 
     use mockito;
@@ -115,7 +124,8 @@ mod tests {
     use rand::distributions::Alphanumeric;
     use tempfile::tempdir;
 
-    use crate::fetch::{*, state::DomainState};
+    use crate::fetch::*;
+    use crate::state::DomainState;
 
     pub fn mockito_host() -> protocol::Host{
         let address = mockito::server_address();
@@ -228,7 +238,7 @@ mod tests {
         for _ in 1..101 {
             let capture = retrieve(url(&path)).await.unwrap();
         
-            path = capture.outlinks[0].clone();
+            path = capture.inlinks[0].clone();
         }
         let elapsed = now.elapsed();
         assert!(elapsed < Duration::from_secs(5))
