@@ -13,7 +13,7 @@ use crate::protocol;
 use calico_shared::result::{CalicoResult, CalicoError};
 
 type BranchRef<'a> = &'a str;
-pub const MAINLINE: &str = "mainline";
+pub const MAIN: &str = "main";
 
 
 #[derive(Debug)]
@@ -177,7 +177,7 @@ pub enum ReferencePoint {
     // Specific commit
     Commit(Vec<u8>),
     // Head of main
-    Mainline,
+    Main,
     // Immediate parent of a reference point
     Parent(Box<ReferencePoint>),
     // Rewinds from a reference point to find the last checkpoint
@@ -198,9 +198,9 @@ impl ReferencePoint {
     /*
     // TODO: implement support for reference point parsing
 
-    // master@^                     One commit back HEAD on master
-    // master@{10}                   Ten commits back HEAD on master
-    // master@[20221026T220447Z]    Rewind master to a specific timestamp
+    // main@^                     One commit back HEAD on main
+    // main@{10}                  Ten commits back HEAD on main
+    // main@[20221026T220447Z]    Rewind master to a specific timestamp
     
     fn parse(reference_str: &str) -> Self {
         todo!()
@@ -226,7 +226,7 @@ impl TransactionLog {
 
         log.init_log().await?;
 
-        log.init_branch(MAINLINE).await?;
+        log.init_branch(MAIN).await?;
 
         Ok(log)
     }
@@ -246,8 +246,8 @@ impl TransactionLog {
         Ok(commit)
     }
 
-    pub async fn head_mainline(&self) -> CalicoResult<Commit> {
-        self.head(MAINLINE).await
+    pub async fn head_main(&self) -> CalicoResult<Commit> {
+        self.head(MAIN).await
     }
 
     pub async fn head_id<'a>(&self, branch: BranchRef<'a>) -> CalicoResult<Vec<u8>> 
@@ -257,8 +257,8 @@ impl TransactionLog {
         Ok(prot_ref.commit_id)
     }
 
-    pub async fn head_id_mainline(&self) -> CalicoResult<Vec<u8>> {
-        self.head_id(MAINLINE).await
+    pub async fn head_id_main(&self) -> CalicoResult<Vec<u8>> {
+        self.head_id(MAIN).await
     }
 
     pub async fn init_branch<'a>(&self, branch: BranchRef<'a>) -> CalicoResult<protocol::Ref> {
@@ -295,8 +295,8 @@ impl TransactionLog {
             ReferencePoint::Ancestor(_, _) => {
                 todo!()
             },
-            ReferencePoint::Mainline => {
-                self.head_mainline().await
+            ReferencePoint::Main => {
+                self.head_main().await
             }
             ReferencePoint::Parent(reference_point) => {
                 let commit = self.find_commit(reference_point).await?;
@@ -582,7 +582,7 @@ mod tests {
     use crate::protocol;
     use calico_shared::result::CalicoResult;
 
-    use super::MAINLINE;
+    use super::MAIN;
 
     #[tokio::test]
     async fn create_new_transaction_log() -> CalicoResult<()> {
@@ -590,7 +590,7 @@ mod tests {
         let object_store:Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?);
         let log = TransactionLog::init(object_store).await?;
 
-        let head_result = log.head_mainline().await;
+        let head_result = log.head_main().await;
         assert!(head_result.is_err());
 
         Ok(())
@@ -613,7 +613,7 @@ mod tests {
     async fn test_commit_push<'a>(log:&'a TransactionLog, timestamp: u64, partition_num: u64, column_group: &str, filename: &str) -> Commit<'a> {
         let cols = vec!["a".to_string()];
         let col_expr = vec![("a".to_string(), "$new".to_string())];
-        let head_id = log.head_id_mainline().await.unwrap();
+        let head_id = log.head_id_main().await.unwrap();
         let file = test_file(timestamp, partition_num, column_group, filename);
 
         let commit = log.create_commit(
@@ -626,7 +626,7 @@ mod tests {
             col_expr, 
             vec![file]).await.unwrap();
 
-        let _new_head = log.fast_forward(MAINLINE, &commit.commit_id).await.unwrap();
+        let _new_head = log.fast_forward(MAIN, &commit.commit_id).await.unwrap();
 
         commit
     }
@@ -663,7 +663,7 @@ mod tests {
 
         test_commit_push(&log, 1, 0, "x", "a").await;
 
-        let head = log.head_mainline().await?;
+        let head = log.head_main().await?;
         let history = head.history(100).await.unwrap();
         assert_eq!(history.len(), 1);
 
@@ -673,7 +673,7 @@ mod tests {
 
         test_commit_push(&log, 1, 0, "x", "b").await;
 
-        let head = log.head_mainline().await?;
+        let head = log.head_main().await?;
         let history = head.history(100).await.unwrap();
         assert_eq!(history.len(), 2);
 
@@ -696,7 +696,7 @@ mod tests {
         test_commit_push(&log, 4, 0, "x", "e").await;
         log.create_checkpoint(&saved_commit.commit_id, 5, &vec![test_file(5, 0, "x", "d")]).await?;
 
-        let head = log.head_mainline().await?;
+        let head = log.head_main().await?;
         let history = head.history(100).await?;
         assert_eq!(history.len(), 4);
 
@@ -741,7 +741,7 @@ mod tests {
         let commit = test_commit_push(&log, 1, 0, "x", "a").await;
 
         let log = TransactionLog::open(object_store.clone()).await?;
-        let head = log.head_mainline().await?;
+        let head = log.head_main().await?;
 
         assert_eq!(head.commit_id, commit.commit_id);
 

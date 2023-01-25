@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use datafusion::physical_plan::{SendableRecordBatchStream};
 
 use crate::datatypes::systemtime_to_timestamp;
-use crate::log::MAINLINE;
+use crate::log::MAIN;
 use crate::table::TableStore;
 use crate::protocol;
 use crate::writer::write_batches;
@@ -109,7 +109,7 @@ impl Operation<protocol::Commit> for AppendOperation {
     
         // TODO: handle distinct transaction logs
         let log = table_store.default_transaction_log().await?;
-        let head_id = log.head_id_mainline().await?;
+        let head_id = log.head_id_main().await?;
     
         let timestamp = match self.timestamp {
             Some(ts) => ts,
@@ -137,7 +137,7 @@ impl Operation<protocol::Commit> for AppendOperation {
             col_expr.to_vec(), 
             all_tile_files).await?;
     
-        let _new_head = log.fast_forward(MAINLINE, &commit.commit_id).await?;
+        let _new_head = log.fast_forward(MAIN, &commit.commit_id).await?;
     
         Ok(commit.commit)
     }
@@ -182,7 +182,7 @@ mod tests {
         append_operation(table_store.clone(), make_data(10, 20, 0, &col_groups)).await.unwrap();
         
         let log = table_store.default_transaction_log().await.unwrap();
-        let head = log.head_mainline().await.unwrap();
+        let head = log.head_main().await.unwrap();
         let history = head.history(100).await.unwrap();
         assert_eq!(history.len(), 3);
         // make sure the files are in the object store
@@ -209,7 +209,7 @@ mod tests {
             .execute(table_store.clone()).await.unwrap();
         
         let log = table_store.default_transaction_log().await.unwrap();
-        let head = log.head_mainline().await.unwrap();
+        let head = log.head_main().await.unwrap();
         let history = head.history(100).await.unwrap();
         assert_eq!(history.len(), 1);
         // make sure the files are in the object store

@@ -56,7 +56,7 @@ async fn run_append_load(table_store: Arc<TableStore>,
 async fn perform_query(table_store: Arc<TableStore>, 
                        ctx: &SessionContext,
                        columns: &Vec<String>) -> CalicoResult<Vec<RecordBatch>> {
-    let reference = ReferencePoint::Mainline;
+    let reference = ReferencePoint::Main;
     let columns: Vec<&str> = columns.iter().map(AsRef::as_ref).collect();
     let table_schema = make_schema(&columns);
     let sql = format!("SELECT * FROM test LIMIT 10");

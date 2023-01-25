@@ -211,7 +211,7 @@ pub mod tests {
         ];
         let remote_path = Path::new("crawler_state");
 
-        let state = DomainState::init(&mockito_host(), temp.path(), remote_path).await.unwrap();
+        let state = DomainState::init_no_checkpoint(&mockito_host(), temp.path(), remote_path).await.unwrap();
         assert!(robots_filter(&state.robots, &url("/hello")));
     }
     #[tokio::test]
@@ -223,7 +223,7 @@ pub mod tests {
         ];
         let remote_path = Path::new("crawler_state");
 
-        let state = DomainState::init(&mockito_host(), temp.path(), remote_path).await.unwrap();
+        let state = DomainState::init_no_checkpoint(&mockito_host(), temp.path(), remote_path).await.unwrap();
         assert!(!robots_filter(&state.robots, &url("/hello")));
     }
     #[tokio::test]

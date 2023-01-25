@@ -112,7 +112,7 @@ impl Task for DeepCrawlTask {
         let mut remote_path = remote_path.clone();
         remote_path.push(&self.domain.hostname);
         
-        let mut domain_state = DomainState::init(&self.domain, &local_path, &remote_path).await.expect("should work");
+        let mut domain_state = DomainState::init(&self.domain, &local_path, &remote_path, object_store.clone(), transaction_log.clone()).await.expect("should work");
         let now = Instant::now();
 
         let mut telemetry = CrawlTelementry::init();

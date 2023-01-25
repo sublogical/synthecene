@@ -4,8 +4,8 @@ sudo apt-install libssl-dev libclang-dev
 
 ### TODO: Crawler
 * state
-  * downloading existing state at start of task
-  * only store checkpoints when they are big enough
+  * only store checkpoints when they are big enough (maybe_checkpoint)
+  * ~~downloading existing state at start of task~~
   * ~~store periodic checkpoints in object store~~
   * ~~test using rocksdb vs yaque~~
   * ~~priority queue for rocksdb~~
@@ -21,9 +21,9 @@ sudo apt-install libssl-dev libclang-dev
   * ~~benchmark last visit map~~
 * fetch object
   * sitemaps support
-  * enforce fetch rate
-  * normalize URLs properly
-  * partition inlinks and outlinks
+  * ~~normalize URLs properly~~
+  * ~~partition inlinks and outlinks~~
+  * ~~enforce fetch rate~~
   * ~~support basic fetch~~
   * ~~extract urls~~
   * ~~support robots.txt~~
@@ -64,6 +64,7 @@ sudo apt-install libssl-dev libclang-dev
   * distribution
 * refresh crawl task
   * time sensitive sitemap crawl
+  * if-modified-since in fetch
 * wide crawl task
   * download domain seeds
   * start sub-tasks for each domain    

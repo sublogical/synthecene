@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use result::ResultOptionExt;
-use storelib::log::{TransactionLog, Commit, MAINLINE};
+use storelib::log::{TransactionLog, Commit, MAIN};
 use tempfile::tempdir;
 use uuid::Uuid;
 use object_store::ObjectStore;
@@ -48,8 +48,8 @@ fn generate_lossy_key(priority: u8) -> [u8;16] {
 #[derive(Debug)]
 pub enum Error {
     _ImproperCheckpointCommit(String),
-    FailedCommit(Box<dyn std::error::Error>),
-    CommitCollision(Box<dyn std::error::Error>),
+    FailedCommit(Box<dyn std::error::Error + Send>),
+    CommitCollision(Box<dyn std::error::Error + Send>),
 
     IoError(io::Error),
     DecodeError(prost::DecodeError),
@@ -179,7 +179,8 @@ impl PriorityQueue {
      *
      * Note that this iterator will destroy the entries as it iterates over them. If you wish to save an entry, call `save` on the `ItemGuard` before dropping it.
      */
-    pub fn _iter<'db : 'iter, 'iter>(&'db mut self) -> PriorityQueueIterator<'iter> {
+    #[allow(dead_code)] // test only
+    pub fn iter<'db : 'iter, 'iter>(&'db mut self) -> PriorityQueueIterator<'iter> {
         let iter = self.0.iterator_cf(&self.cf(), rocksdb::IteratorMode::Start); // Always iterates forward
         PriorityQueueIterator { iter, db: self.0.clone(), cf: self.1.clone() }
     }
@@ -198,6 +199,18 @@ impl PriorityQueue {
         PriorityQueueMessageIterator(inner, PhantomData)
     }
 
+    #[allow(dead_code)] // test only
+    pub fn is_empty(&self) -> Result<bool> {
+        self.0.property_int_value_cf(&self.cf(), "rocksdb.estimate-num-keys")
+            .map_err(|err| Error::DatabaseError(err))
+            .map(|x| x == Some(0))
+    }
+
+    #[allow(dead_code)] // test only
+    pub fn len(&self) -> Result<u64> {
+        self.0.property_int_value_cf(&self.cf(), "rocksdb.estimate-num-keys")
+            .map_err(|err| Error::DatabaseError(err))
+            .map(|x| x.unwrap_or(0) as u64)}
 }
 
 pub struct PriorityQueueMessageIterator<'iter, T: prost::Message>(PriorityQueueIterator<'iter>, PhantomData<T>);
@@ -363,7 +376,14 @@ impl DomainState {
         Ok(Arc::new(rocksdb::DB::open_cf_descriptors(&db_opts, path, vec![cf_frontier, cf_last_visit])?))
     }
 
-    pub(crate) async fn _download_checkpoint<O>(object_store: Arc<dyn ObjectStore>,
+    // todo: support passing in a reference string (e..g "main@2020-01-01T00:00:00Z")
+    pub(crate) async fn get_checkpoint<'log>(log: &'log TransactionLog) -> Result<Option<Commit<'log>>> {
+        match log.head_main().await {
+            Ok(commit) => Ok(Some(commit)),
+            Err(_) => Ok(None),
+        }
+    }
+    pub(crate) async fn download_checkpoint<O>(object_store: &Arc<dyn ObjectStore>,
                                                commit: &Commit<'_>,
                                                output_path:O) -> Result<()>
     where
@@ -390,39 +410,59 @@ impl DomainState {
 
         // Download the archive file from storage
         let mut reader = object_store.get(&object_path).await?.into_stream();
-        read_stream_file(&mut reader, &output_path).await?;    
-        
-        todo!("re-implement open checkpoint logic");        
-    }
-    /*
-        // todo: shouldn't be assuming we can use tempdir for temporary storage here
-        let temp = tempdir().unwrap();
-        let download_archive_path = temp.path().join("download_archive.tgz");
- */
+        read_stream_file(&mut reader, &output_path).await?;
 
-    pub(crate) async fn _open_checkpoint<I, O>(input_path:I, output_path:I) -> Result<()>
+        Ok(())
+    }
+
+    pub(crate) async fn open_checkpoint<I, O>(input_path:I, output_path:O) -> Result<()>
     where
         O: AsRef<Path> + Debug,
         I: AsRef<Path> + Debug
     {
         open_archive(input_path, output_path).await?;
 
-        todo!("re-implement open checkpoint logic");        
+        Ok(())
     }
 
-    pub async fn init<I>(host: &protocol::Host, 
-                         local_path:I,
-                         remote_path:I) -> Result<DomainState>
+    pub async fn init<I,O>(host: &protocol::Host, 
+                           local_path:I,
+                           remote_path:O,
+                           object_store: Arc<dyn ObjectStore>,
+                           log: Arc<TransactionLog>) -> Result<DomainState>
     where
-        I: AsRef<Path>
+        I: AsRef<Path>,
+        O: AsRef<Path>
     {
         let local_path = local_path.as_ref().to_path_buf();
         let remote_path = remote_path.as_ref().to_path_buf();
 
-        let robots = Self::fetch_robots(host).await?;
+        if let Ok(Some(checkpoint_commit)) = Self::get_checkpoint(&log).await {
+            // todo: shouldn't be assuming we can use tempdir for temporary storage here
+            let temp = tempdir().unwrap();
+            let temp_path = temp.path().join("frontier_archive.tgz");
+
+            Self::download_checkpoint(&object_store, &checkpoint_commit, &temp_path).await?;
+            Self::open_checkpoint(&temp_path, &local_path).await?;
+        }
+
+        Self::init_no_checkpoint(host, &local_path, &remote_path).await
+    }
+    
+    pub async fn init_no_checkpoint<I,O>(host: &protocol::Host, 
+                                         local_path:I,
+                                         remote_path:O) -> Result<DomainState>
+    where
+        I: AsRef<Path>,
+        O: AsRef<Path>
+    {
+        let local_path = local_path.as_ref().to_path_buf();
+        let remote_path = remote_path.as_ref().to_path_buf();
+
         let db = Self::open_db(local_path.clone())?;
         let frontier = PriorityQueue::init(db.clone(), "cf_frontier")?;
         let last_visit = KvTable::init(db.clone(), "cf_last_visit")?;
+        let robots = Self::fetch_robots(host).await?;
         let host = host.clone();
 
         Ok(DomainState { local_path, remote_path, host, robots, db, frontier, last_visit })
@@ -491,7 +531,7 @@ impl DomainState {
             }],
         };
 
-        let head_id = log.head_id_mainline().await
+        let head_id = log.head_id_main().await
             .map_err(|err| Error::FailedCommit(Box::new(err)))?;
 
         let commit = log.create_commit(&head_id,
@@ -504,7 +544,7 @@ impl DomainState {
             vec![tile_file]).await
             .map_err(|err| Error::FailedCommit(Box::new(err)))?;
 
-        let _new_head = log.fast_forward(MAINLINE, &commit.commit_id).await
+        let _new_head = log.fast_forward(MAIN, &commit.commit_id).await
             .map_err(|err| Error::CommitCollision(Box::new(err)))?;
 
 
@@ -546,10 +586,11 @@ impl DomainState {
 mod tests {
     use std::{time::{Duration, Instant }, cmp::max };
 
-    use crate::state::{generate_lossy_key, DomainState};
+    use crate::{state::{generate_lossy_key, DomainState}, fetch::tests::mockito_host};
 
     use super::*;
     use crate::protocol;
+    use object_store::local::LocalFileSystem;
     use rand::{distributions::Alphanumeric, thread_rng, Rng};
     use tempfile::tempdir;
     use fs_extra::dir::get_size;
@@ -569,7 +610,7 @@ mod tests {
         let mut url = "".to_string();
         let mut count = 0;
 
-        for item in frontier._iter() {
+        for item in frontier.iter() {
             match item {
                 Ok(item) => {
                     let next_url = std::str::from_utf8(&item).unwrap().to_string();
@@ -660,7 +701,7 @@ mod tests {
     async fn last_visit_set_get_speedrun() {
         let temp = tempdir().unwrap();
         let db = DomainState::open_db(temp.path()).unwrap();
-        let mut store = KvTable::init(db.clone(), "cf_last_visit").unwrap();
+        let store = KvTable::init(db.clone(), "cf_last_visit").unwrap();
 
         let rand_string: String = thread_rng()
             .sample_iter(&Alphanumeric)
@@ -692,6 +733,51 @@ mod tests {
             folder_size as f32 / 100_000.
         );
     }
+
+    #[tokio::test]
+    async fn checkpoint_roundtrip() {
+        let temp_dir = tempdir().unwrap();
+        let object_store:Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let transaction_log = Arc::new(TransactionLog::init(object_store.clone()).await.unwrap());
+
+        let local_path = tempdir().unwrap();
+        let remote_path:PathBuf = "crawler_state".into();
+        let domain = mockito_host();
+
+        let head = transaction_log.head_main().await;
+        assert!(head.is_err());
+
+        let mut domain_state = DomainState::init(&domain, &local_path, &remote_path, object_store.clone(), transaction_log.clone()).await.expect("should work");
+
+        assert!(domain_state.frontier.is_empty().unwrap());
+        assert_eq!(domain_state.frontier.len().unwrap(), 0);
+
+        populate_frontier(&mut domain_state.frontier, 1_000).await;
+
+        assert!(!domain_state.frontier.is_empty().unwrap());
+        assert_eq!(domain_state.frontier.len().unwrap(), 1_000);
+
+        domain_state.checkpoint(object_store.clone(), transaction_log.clone()).await.unwrap();
+
+        let head = transaction_log.head_main().await;
+        assert!(head.is_ok());
+
+        let local_path2 = tempdir().unwrap();
+        let mut domain_state2 = DomainState::init(&domain, &local_path2, &remote_path, object_store.clone(), transaction_log.clone()).await.expect("should work");
+
+        assert!(!domain_state2.frontier.is_empty().unwrap());
+        assert_eq!(domain_state2.frontier.len().unwrap(), 1_000);
+
+        let read_urls = drain_frontier(&mut domain_state2.frontier).await;
+        assert_eq!(1_000, read_urls);
+
+    }
+
+    #[tokio::test]
+    async fn checkpoint_maybe() {
+    }
+
+
 }
 
 

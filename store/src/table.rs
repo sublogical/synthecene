@@ -599,7 +599,7 @@ mod tests {
 
         lambda(table_store.clone()).await;
 
-        let reference = ReferencePoint::Mainline;
+        let reference = ReferencePoint::Main;
         let table_schema = make_schema(&fields);
         
         let table = Table::define(table_store, table_schema, reference).unwrap();    
@@ -899,13 +899,13 @@ mod tests {
         let table_schema = make_schema(&columns);
 
         let test_cases = vec![
-            ("head",   ReferencePoint::Mainline,                                   OVERLAP_EXPECTED_3),
+            ("head",   ReferencePoint::Main,                                   OVERLAP_EXPECTED_3),
             // todo: implement ancestor reference search
             // ("anc",    ReferencePoint::Ancestor(Box::new(ReferencePoint::Mainline), 2), OVERLAP_EXPECTED_1),
             ("c1",     ReferencePoint::Commit(c1.commit_id),                       OVERLAP_EXPECTED_1),
             ("c2",     ReferencePoint::Commit(c2.commit_id),                       OVERLAP_EXPECTED_2),
             ("c3",     ReferencePoint::Commit(c3.commit_id),                       OVERLAP_EXPECTED_3),
-            ("parent", ReferencePoint::Parent(Box::new(ReferencePoint::Mainline)), OVERLAP_EXPECTED_2),
+            ("parent", ReferencePoint::Parent(Box::new(ReferencePoint::Main)), OVERLAP_EXPECTED_2),
             // todo: implement timestamp reference search
             // ("timestamp", ReferencePoint::TimestampFrom(Box::new(ReferencePoint::Mainline), 2500), OVERLAP_EXPECTED_2)
         ];
