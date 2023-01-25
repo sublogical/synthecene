@@ -66,15 +66,6 @@ impl <T:Float> Accumulator<T> for SumAccumulator<T> {
     }
 }
 
-struct Actuator<A, T, F, I> 
-where 
-    A: Accumulator<T>,
-    T:Float,
-    F: Fn(& I) -> T,
-{
-    accumulator: A,
-    selector: F
-}
 #[derive(Clone, Debug, Default)]
 pub struct MaxAccumulator<T:Float> {
     value: T
