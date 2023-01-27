@@ -10,7 +10,7 @@ path = "src/crawler.rs"
 [dependencies]
 store = { path = "../store" }
 calico-shared = { path = "../shared" }
-
+anyhow = "1"
 async-trait = "0.1"
 async-stream = "0.3"
 chrono = "0.4"
@@ -20,6 +20,7 @@ env_logger = "0.10"
 kv = "0.24"
 futures = "0.3"
 futures-util = "0.3"
+hdrhistogram = "7.5"
 itertools = "0.10"
 lazy_static = "1.4"
 log = "0.4"
@@ -29,6 +30,7 @@ ouroboros = "0.15"
 prost = "0.11.0"
 prost-types = "0.11.0"
 rand = "0.8"
+rdkafka = { version = "0.29" }
 regex = "1.7"
 reqwest = "0.11"
 result = "1"
@@ -40,9 +42,15 @@ tokio = { version = "1", features = ["full"] }
 uuid = "1.2"
 
 
+arrow = "24"
+parquet = "24"
+
 [dev-dependencies]
 fs_extra = "1.2.0"
 mockito = "0.31"
 
 [build-dependencies]
 prost-build = "0.11.0"
+
+[features]
+integration_tests = []

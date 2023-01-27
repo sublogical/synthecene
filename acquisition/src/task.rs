@@ -16,7 +16,7 @@ use crate::telemetry;
 #[derive(Debug)]
 pub enum Error {
     StateFailure(crate::state::Error, &'static str),
-    StoreFailure(crate::store::Error, &'static str),
+    StoreFailure(anyhow::Error, &'static str),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -59,15 +59,13 @@ pub struct TaskReport {
     pub max_size: f64
 }
 
-type CrawlStat=Box<dyn telemetry::Accumulator<f64> + Send>;
-
 pub struct CrawlTelementry {
     
-    avg_latency: CrawlStat,
-    avg_size: CrawlStat,
-    max_size: CrawlStat,
-    avg_outlinks: CrawlStat,
-    max_outlinks: CrawlStat
+    avg_latency: telemetry::Stat,
+    avg_size: telemetry::Stat,
+    max_size: telemetry::Stat,
+    avg_outlinks: telemetry::Stat,
+    max_outlinks: telemetry::Stat
 }
 
 impl CrawlTelementry {
@@ -77,9 +75,9 @@ impl CrawlTelementry {
             
         CrawlTelementry { 
             avg_latency: Box::new(telemetry::ExponentialDecayAccumulator::init(0.001, now)),
-            avg_size: Box::new(telemetry::SumAccumulator::default()),
+            avg_size: Box::new(telemetry::MeanAccumulator::default()),
             max_size: Box::new(telemetry::MaxAccumulator::default()),
-            avg_outlinks: Box::new(telemetry::SumAccumulator::default()),
+            avg_outlinks: Box::new(telemetry::MeanAccumulator::default()),
             max_outlinks: Box::new(telemetry::MaxAccumulator::default()),
         }
     }
@@ -108,15 +106,25 @@ impl Task for DeepCrawlTask {
 
         let mut local_path = local_path.clone();
         local_path.push(&self.domain.hostname);
+
+        let mut domain_state_path = local_path.clone();
+        domain_state_path.push("domain_state");
         
         let mut remote_path = remote_path.clone();
         remote_path.push(&self.domain.hostname);
         
-        let mut domain_state = DomainState::init(&self.domain, &local_path, &remote_path, object_store.clone(), transaction_log.clone()).await.expect("should work");
+        let mut domain_state = DomainState::init(&self.domain, &domain_state_path, &remote_path, object_store.clone(), transaction_log.clone()).await.expect("should work");
         let now = Instant::now();
 
         let mut telemetry = CrawlTelementry::init();
-        let local_store = LocalStore {};
+
+        let mut capture_state_path = local_path.clone();
+        capture_state_path.push("capture_state");
+        
+        let mut local_store = LocalStore::init(&self.domain, &capture_state_path).await
+            .map_err(|err| Error::StoreFailure(err, "failed to initialize local store"))?;
+
+        let checkpoint_threshold = 1_000;
 
         // todo: handle sitemap
 
@@ -202,7 +210,7 @@ impl Task for DeepCrawlTask {
             append_seeds(&mut domain_state, &unique_and_new)?;
             pages_fetched += fetched_this_batch;
 
-            domain_state.maybe_checkpoint(object_store.clone(), transaction_log.clone()).await
+            domain_state.maybe_checkpoint(object_store.clone(), transaction_log.clone(), checkpoint_threshold).await
                 .map_err(|err| Error::StateFailure(err, "failed to save domain state"))?;
 
             local_store.maybe_upload(&remote_path, object_store.clone()).await

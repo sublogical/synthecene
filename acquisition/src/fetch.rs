@@ -23,6 +23,9 @@ pub fn full_url(host: &protocol::Host, relative_url: &str) -> String{
 
 #[derive(Clone, Debug, Default)]
 pub struct Capture {
+    /// The URL that was fetched
+    pub normalized_url: String,
+
     // raw HTML body of page
     pub body: String,
 
@@ -82,15 +85,16 @@ pub async fn retrieve(url: String) -> CalicoResult<Capture> {
     let fetch_time = start.elapsed().as_millis().try_into().unwrap();
     let links = extract_links(&body);
     // todo: move this above the fetch
-    let url = reqwest::Url::parse(&url).expect("this would have already failed");
+    let reqwest_url = reqwest::Url::parse(&url).expect("this would have already failed");
 
     let links:Vec<_> = links.into_iter()
         .unique()
         .collect();
 
-    let (inlinks, outlinks) = smarts::normalize_links(url, &links);
+    let (inlinks, outlinks) = smarts::normalize_links(reqwest_url, &links);
 
     Ok(Capture {
+        normalized_url: url.to_string(),
         body,
         fetch_time,
         content_length,

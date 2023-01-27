@@ -1,4 +1,4 @@
-use num::{Float, Zero};
+use num::{Float, Zero, Integer};
 
 pub trait Accumulator<T:Float>  {
     fn add(&mut self, value:T, weight:T, time:T) -> T;
@@ -47,13 +47,13 @@ impl <T:Float> Accumulator<T> for ExponentialDecayAccumulator<T> {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct SumAccumulator<T:Float> {
+pub struct MeanAccumulator<T:Float> {
     value: T,
     weight: T,
 }
 
 
-impl <T:Float> Accumulator<T> for SumAccumulator<T> {
+impl <T:Float> Accumulator<T> for MeanAccumulator<T> {
     fn add(&mut self, value:T, weight:T, _time:T) -> T {
         self.value = self.value + value;
         self.weight = self.weight + weight;
@@ -101,3 +101,25 @@ impl <T:Float> Accumulator<T> for MinAccumulator<T> {
         self.value
     }
 }
+
+#[derive(Clone, Debug, Default)]
+pub struct SumAccumulator<T:Float> {
+    value: T
+}
+
+impl <T:Float> Accumulator<T> for SumAccumulator<T> {
+    fn add(&mut self, value:T, _weight:T, _time:T) -> T {
+        if value < self.value {
+            self.value = self.value + value;
+        }
+        self.value
+    }
+
+    fn value(&self) -> T {
+        self.value
+    }
+}
+
+
+
+pub type Stat=Box<dyn Accumulator<f64> + Send + Sync>;

@@ -14,6 +14,7 @@ use storelib::{log::TransactionLog, datatypes::datetime_to_timestamp};
 use tempfile::tempdir;
 use tokio::fs::create_dir_all;
 
+mod broadcast;
 mod controller;
 mod fetch;
 mod smarts;

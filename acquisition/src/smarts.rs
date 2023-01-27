@@ -65,6 +65,9 @@ where T: IntoIterator<Item=&'a String> {
     (inlinks, outlinks)
 }
 
+pub fn estimate_compression(_num_captures: f64, _content_bytes: f64) -> f64 {
+    0.3
+}
 
 #[cfg(test)]
 mod tests {

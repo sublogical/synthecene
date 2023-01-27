@@ -130,30 +130,35 @@ impl <T> DerefMut for ItemGuard<T> {
     }
 }
 
-pub struct PriorityQueue(Arc<rocksdb::DB>, String);
+pub struct PriorityQueue{
+    db:Arc<rocksdb::DB>,
+    cf: String,
+    update_count: u32
+}
 
 impl PriorityQueue {
     pub fn init(db: Arc<rocksdb::DB>, cf: &str) -> Result<PriorityQueue> 
     {
         let cf = cf.to_string();
 
-        Ok(PriorityQueue(db, cf))
+        Ok(PriorityQueue{db, cf, update_count: 0})
     }
     
     fn cf(&self) -> Arc<rocksdb::BoundColumnFamily<'_>> {
-        self.0.cf_handle(&self.1).expect("incorrect cf name")
+        self.db.cf_handle(&self.cf).expect("incorrect cf name")
     }
 
     /**
      * appends raw bytes to the queue
      */
-    pub fn append<B>(&self, priority: u8, value: B) -> Result<()> 
+    pub fn append<B>(&mut self, priority: u8, value: B) -> Result<()> 
     where
         B: AsRef<[u8]>
     {
         let key = generate_lossy_key(priority);
 
-        self.0.put_cf(&self.cf(), key, &value)?;
+        self.db.put_cf(&self.cf(), key, &value)?;
+        self.update_count += 1;
 
         Ok(())
     }
@@ -161,7 +166,7 @@ impl PriorityQueue {
     /**
      * Append a message to the queue, serializing it with prost
      */
-    pub fn append_message<T>(&self, priority: u8, message: &T) -> Result<()>
+    pub fn append_message<T>(&mut self, priority: u8, message: &T) -> Result<()>
     where
         T : prost::Message 
     {
@@ -181,8 +186,8 @@ impl PriorityQueue {
      */
     #[allow(dead_code)] // test only
     pub fn iter<'db : 'iter, 'iter>(&'db mut self) -> PriorityQueueIterator<'iter> {
-        let iter = self.0.iterator_cf(&self.cf(), rocksdb::IteratorMode::Start); // Always iterates forward
-        PriorityQueueIterator { iter, db: self.0.clone(), cf: self.1.clone() }
+        let iter = self.db.iterator_cf(&self.cf(), rocksdb::IteratorMode::Start); // Always iterates forward
+        PriorityQueueIterator { iter, db: self.db.clone(), cf: self.cf.clone() }
     }
 
     /**
@@ -194,23 +199,33 @@ impl PriorityQueue {
     where
         T : prost::Message + Default
     {
-        let iter = self.0.iterator_cf(&self.cf(), rocksdb::IteratorMode::Start); // Always iterates forward
-        let inner = PriorityQueueIterator { iter, db: self.0.clone(), cf: self.1.clone() };
+        let iter = self.db.iterator_cf(&self.cf(), rocksdb::IteratorMode::Start); // Always iterates forward
+        let inner = PriorityQueueIterator { iter, db: self.db.clone(), cf: self.cf.clone() };
         PriorityQueueMessageIterator(inner, PhantomData)
     }
 
     #[allow(dead_code)] // test only
     pub fn is_empty(&self) -> Result<bool> {
-        self.0.property_int_value_cf(&self.cf(), "rocksdb.estimate-num-keys")
+        self.db.property_int_value_cf(&self.cf(), "rocksdb.estimate-num-keys")
             .map_err(|err| Error::DatabaseError(err))
             .map(|x| x == Some(0))
     }
 
     #[allow(dead_code)] // test only
     pub fn len(&self) -> Result<u64> {
-        self.0.property_int_value_cf(&self.cf(), "rocksdb.estimate-num-keys")
+        self.db.property_int_value_cf(&self.cf(), "rocksdb.estimate-num-keys")
             .map_err(|err| Error::DatabaseError(err))
-            .map(|x| x.unwrap_or(0) as u64)}
+            .map(|x| x.unwrap_or(0) as u64)
+    }
+
+    pub fn get_update_count(&self) -> u32 {
+        self.update_count
+    }
+
+    pub fn reset_update_count(&mut self) {
+        self.update_count = 0;
+    }
+        
 }
 
 pub struct PriorityQueueMessageIterator<'iter, T: prost::Message>(PriorityQueueIterator<'iter>, PhantomData<T>);
@@ -255,21 +270,25 @@ impl <'iter> Iterator for PriorityQueueIterator<'iter> {
 }
 
 
-pub struct KvTable(Arc<rocksdb::DB>, String);
+pub struct KvTable {
+    db: Arc<rocksdb::DB>, 
+    cf: String,
+    update_count: u32
+}
 
 impl KvTable {
     pub fn init(db: Arc<rocksdb::DB>, cf: &str) -> Result<KvTable> 
     {
         let cf = cf.to_string();
 
-        Ok(KvTable(db, cf))
+        Ok(KvTable{ db, cf, update_count: 0 })
     }
     
     /**
      * Get the column family handle for this table
      */
     fn cf(&self) -> Arc<rocksdb::BoundColumnFamily<'_>> {
-        self.0.cf_handle(&self.1).expect("incorrect cf name")
+        self.db.cf_handle(&self.cf).expect("incorrect cf name")
     }
 
     /**
@@ -279,7 +298,7 @@ impl KvTable {
     where
         K: AsRef<[u8]>
     {
-        Ok(self.0.get_cf(&self.cf(), key)?)
+        Ok(self.db.get_cf(&self.cf(), key)?)
     }
 
     /**
@@ -290,7 +309,7 @@ impl KvTable {
         K: AsRef<[u8]>,
         T : prost::Message + Default
     {
-        let value = self.0.get_cf(&self.cf(), key)?;
+        let value = self.db.get_cf(&self.cf(), key)?;
 
         let res = value.map(|bytes| T::decode(Bytes::from(bytes)));
 
@@ -305,18 +324,19 @@ impl KvTable {
     where
         K: AsRef<[u8]>
     {
-        Ok(self.0.get_cf(&self.cf(), key)?.is_some())
+        Ok(self.db.get_cf(&self.cf(), key)?.is_some())
     }
 
     /**
      * Put a value into the table, using raw bytes
      */
-    pub fn put<K, B>(&self, key: K, value: B) -> Result<()> 
+    pub fn put<K, B>(&mut self, key: K, value: B) -> Result<()> 
     where
         K: AsRef<[u8]>,
         B: AsRef<[u8]>
     {
-        self.0.put_cf(&self.cf(), key, &value)?;
+        self.db.put_cf(&self.cf(), key, &value)?;
+        self.update_count += 1;
 
         Ok(())
     }
@@ -324,7 +344,7 @@ impl KvTable {
     /**
      * Put a message into the table, encoding it with prost
      */
-    pub fn put_message<K,T>(&self, key: K, message: &T) -> Result<()>
+    pub fn put_message<K,T>(&mut self, key: K, message: &T) -> Result<()>
     where
         K: AsRef<[u8]>,
         T : prost::Message 
@@ -335,7 +355,18 @@ impl KvTable {
         message.encode(&mut buf)?;
         assert_eq!(expected_len, buf.len());
 
-        self.put(key, &buf)
+        self.put(key, &buf)?;
+        self.update_count += 1;
+
+        Ok(())
+    }
+
+    pub fn get_update_count(&self) -> u32 {
+        self.update_count
+    }
+
+    pub fn reset_update_count(&mut self) {
+        self.update_count = 0;
     }
 }
 
@@ -574,10 +605,17 @@ impl DomainState {
 
     pub async fn maybe_checkpoint(&mut self,
         object_store: Arc<dyn ObjectStore>,
-        log: Arc<TransactionLog>) -> Result<storelib::protocol::Commit> {
+        log: Arc<TransactionLog>,
+        checkpoint_threshold: u32) -> Result<Option<storelib::protocol::Commit>> {
         
-        // todo: determine if we should bother checkpointing
-        self.checkpoint(object_store, log).await
+        let update_count = self.frontier.get_update_count() + self.last_visit.get_update_count();
+
+        if update_count > checkpoint_threshold {
+            self.checkpoint(object_store, log).await
+                .map(|commit| Some(commit)) 
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -701,7 +739,7 @@ mod tests {
     async fn last_visit_set_get_speedrun() {
         let temp = tempdir().unwrap();
         let db = DomainState::open_db(temp.path()).unwrap();
-        let store = KvTable::init(db.clone(), "cf_last_visit").unwrap();
+        let mut store = KvTable::init(db.clone(), "cf_last_visit").unwrap();
 
         let rand_string: String = thread_rng()
             .sample_iter(&Alphanumeric)
@@ -775,6 +813,41 @@ mod tests {
 
     #[tokio::test]
     async fn checkpoint_maybe() {
+        let temp_dir = tempdir().unwrap();
+        let object_store:Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let transaction_log = Arc::new(TransactionLog::init(object_store.clone()).await.unwrap());
+
+        let local_path = tempdir().unwrap();
+        let remote_path:PathBuf = "crawler_state".into();
+        let domain = mockito_host();
+
+        let head = transaction_log.head_main().await;
+        assert!(head.is_err());
+
+        let mut domain_state = DomainState::init(&domain, &local_path, &remote_path, object_store.clone(), transaction_log.clone()).await.expect("should work");
+
+        assert!(domain_state.frontier.is_empty().unwrap());
+        assert_eq!(domain_state.frontier.len().unwrap(), 0);
+
+        populate_frontier(&mut domain_state.frontier, 100).await;
+
+        assert!(!domain_state.frontier.is_empty().unwrap());
+        assert_eq!(domain_state.frontier.len().unwrap(), 100);
+
+        domain_state.maybe_checkpoint(object_store.clone(), transaction_log.clone(), 1_000).await.unwrap();
+
+        let head = transaction_log.head_main().await;
+        assert!(head.is_err());
+
+        populate_frontier(&mut domain_state.frontier, 1_000).await;
+
+        assert!(!domain_state.frontier.is_empty().unwrap());
+        assert_eq!(domain_state.frontier.len().unwrap(), 1_100);
+
+        domain_state.maybe_checkpoint(object_store.clone(), transaction_log.clone(), 1_000).await.unwrap();
+
+        let head = transaction_log.head_main().await;
+        assert!(head.is_ok());
     }
 
 
