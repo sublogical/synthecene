@@ -1,4 +1,4 @@
-use num::{Float, Zero, Integer};
+use num::{Float, Zero};
 
 pub trait Accumulator<T:Float>  {
     fn add(&mut self, value:T, weight:T, time:T) -> T;

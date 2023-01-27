@@ -1,13 +1,11 @@
 use anyhow::{Context, Result};
 use log::info;
-use rocksdb::properties::MIN_OBSOLETE_SST_NUMBER_TO_KEEP;
 use storelib::blob::write_multipart_file;
 use std::fs::{File, create_dir_all};
 use std::path::Path;
-use std::vec::IntoIter;
 use std::{path::PathBuf, sync::Arc};
 use acquisition::protocol;
-use arrow::array::{StructArray, Array, StringArray, UInt64Array, ArrayRef, UInt8Array};
+use arrow::array::{Array, StringArray, UInt64Array, ArrayRef, UInt8Array};
 use arrow::datatypes::{Field, DataType};
 use lazy_static::lazy_static;
 use object_store::ObjectStore;
@@ -143,7 +141,7 @@ impl LocalStore {
         format!("part-{:05}-{}-c000.snappy.parquet", part_num, part_uuid)
     }
 
-    pub async fn init<I>(host: &protocol::Host, 
+    pub async fn init<I>(_host: &protocol::Host, 
                          local_path:I) -> Result<LocalStore> 
     where
         I: AsRef<Path>,

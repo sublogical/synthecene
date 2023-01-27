@@ -611,8 +611,13 @@ impl DomainState {
         let update_count = self.frontier.get_update_count() + self.last_visit.get_update_count();
 
         if update_count > checkpoint_threshold {
-            self.checkpoint(object_store, log).await
-                .map(|commit| Some(commit)) 
+            let output = self.checkpoint(object_store, log).await
+                .map(|commit| Some(commit))?;
+
+            self.frontier.reset_update_count();
+            self.last_visit.reset_update_count();
+
+            Ok(output)
         } else {
             Ok(None)
         }
