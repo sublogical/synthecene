@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::path::PathBuf;
 use std::process::exit;
-use acquisition::protocol;
+use crawler::protocol;
 use crate::task::{DeepCrawlTask, Task};
 use crate::controller::{Controller, OneTimeUse};
 use calico_shared::result::CalicoResult;

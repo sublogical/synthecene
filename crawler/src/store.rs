@@ -4,7 +4,7 @@ use storelib::blob::write_multipart_file;
 use std::fs::{File, create_dir_all};
 use std::path::Path;
 use std::{path::PathBuf, sync::Arc};
-use acquisition::protocol;
+use crate::protocol;
 use arrow::array::{Array, StringArray, UInt64Array, ArrayRef, UInt8Array};
 use arrow::datatypes::{Field, DataType};
 use lazy_static::lazy_static;
@@ -262,7 +262,7 @@ impl LocalStore {
 mod test {
     use std::sync::Arc;
 
-    use acquisition::protocol;
+    use crate::protocol;
     use fs_extra::dir::get_size;
     use object_store::{ObjectStore, local::LocalFileSystem};
     use rand::{thread_rng, distributions::Alphanumeric, Rng};

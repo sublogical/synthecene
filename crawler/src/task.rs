@@ -10,7 +10,7 @@ use tokio::time::sleep;
 use crate::fetch::{full_url, Capture, robots_filter, retrieve };
 use crate::protocol;
 use crate::store::LocalStore;
-use super::state::{DomainState};
+use crate::state::{DomainState};
 use crate::telemetry;
 
 #[derive(Debug)]

@@ -1,7 +1,7 @@
 [workspace]
 
 members = [
-    "acquisition",
+    "crawler",
     "retrieve",
     "shared",
     "store",
