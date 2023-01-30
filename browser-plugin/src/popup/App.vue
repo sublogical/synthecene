@@ -1,13 +1,13 @@
 <template>
   <div class="extension">
-    <kicker>Tips & Tricks</kicker>
+    <div class="agent">
+      <div class="card-display">How can I help?</div>
+    </div>  
 
-    <h2>Search on MyNotePapar</h2>
+    <v-divider></v-divider>
 
     <input v-model="keyword" placeholder="Enter keyword">
     <button v-on:click="buttonSearch">Search</button>
-
-    <p>To get more articles visit <a target="_blank" href="https://shouts.dev/" style="text-decoration: none;">mynotepaper.com</a></p>
   </div>
 </template>
 
@@ -21,7 +21,7 @@ export default {
   },
   methods: {
     buttonSearch() {
-      alert("Search on MyNotePaper:" + this.keyword);
+      alert("Entered Dialog:" + this.keyword);
     }
   }
 };
@@ -32,11 +32,21 @@ p {
   font-size: 16px;
 }
 .extension {
-  width: 800px;
+  width: 400px;
   text-align: center;
+  @apply bg-slate-400;
+}
+
+.agent {
+  text-align: left;
 }
 
 .card-display {
-  @apply bg-white inline-flex flex-col shadow rounded-xl;
+  width: 300px;
+  height: 30px;
+  margin: 10px;
+  padding: 4px;
+
+  @apply bg-slate-50 inline-flex flex-col shadow rounded-md;
 }
 </style>

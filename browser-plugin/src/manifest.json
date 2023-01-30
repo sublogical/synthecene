@@ -1,11 +1,14 @@
 {
-  "manifest_version": 2,
+  "manifest_version": 3,
   "name": "__MSG_extName__",
   "homepage_url": "http://localhost:8080/",
   "description": "A Vue Browser Extension",
   "default_locale": "en",
   "permissions": [
     "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
     "<all_urls>",
     "*://*/*"
   ],
@@ -15,12 +18,10 @@
     "128": "icons/128.png"
   },
   "background": {
-    "scripts": [
-      "js/background.js"
-    ],
-    "persistent": false
+    "service_worker": "js/background.js",
+    "type": "module"
   },
-  "browser_action": {
+  "action": {
     "default_popup": "popup.html",
     "default_title": "__MSG_extName__",
     "default_icon": {
@@ -31,5 +32,9 @@
   "options_ui": {
     "page": "options.html",
     "browser_style": true
+  },
+  "content_security_policy": {
+    "sandbox": "sandbox allow-scripts allow-forms allow-popups allow-modals; script-src 'self' 'unsafe-inline' 'unsafe-eval'; child-src 'self';",
+    "extension_pages":"script-src 'self' 'wasm-unsafe-eval'; object-src 'self'" 
   }
 }
