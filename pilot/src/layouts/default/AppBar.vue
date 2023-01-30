@@ -1,6 +1,6 @@
 <template>
   <v-app-bar app clipped-left
-    color="blue-grey-darken-2">
+    color="indigo-darken-4">
     <v-app-bar-nav-icon @click="layout_state.drawer = !layout_state.drawer"></v-app-bar-nav-icon>
     
     <v-toolbar-title>Calico Pilot</v-toolbar-title>
@@ -13,6 +13,17 @@
 
     <v-btn class="text-none" stacked to="People">
       <v-icon>mdi-account-multiple-outline</v-icon>
+    </v-btn>
+
+    <v-btn class="text-none" stacked to="Chat">
+      <v-badge
+        :content="store.chat_count"
+        :model-value="store.chat_count > 0"
+        color="success"
+        overlap
+      >
+        <v-icon>mdi-chat-outline</v-icon>
+      </v-badge>
     </v-btn>
 
     <v-btn class="text-none" stacked to="Tasks">

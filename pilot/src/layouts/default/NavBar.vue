@@ -1,9 +1,11 @@
 <template>
     <v-navigation-drawer
+        class="nav-drawer"
         v-model="layout_state.drawer"
         app
         clipped
         permanent
+        color="indigo-darken-2"
       >
       
       <v-list dense nav>
@@ -46,3 +48,9 @@ watch (
     }
 )
 </script>
+<style lang="scss" scoped>
+
+.nav-drawer {
+    width: 800px;
+}
+</style>
