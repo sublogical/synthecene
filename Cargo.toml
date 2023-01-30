@@ -2,6 +2,7 @@
 
 members = [
     "crawler",
+    "gadget",
     "retrieve",
     "shared",
     "store",
