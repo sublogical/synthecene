@@ -16,119 +16,57 @@
     </div>
 </template>
 
-<script>
+<script lang="ts">
     import ChatBubble from './ChatBubble.vue'
+    import { ref, computed, onMounted } from "vue";
+    import type { Ref } from 'vue'
+
     export default {
         components: { ChatBubble },
-        data() {
-            return {
-                messages: [
-                    {
-                        text: "Hi, how can I help you?",
-                        agent: true
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'm sorry, we don't have any giraffes available at the moment. Would you like to order a 60' tall giraffe instead?",
-                        agent: true
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                    {
-                        text: "I'd like to order a 80' tall giraffe. How much is that?",
-                        agent: false
-                    },
-                ],
+        setup() {
+            const currentUrl = location.toString();
+            const hostname = location.hostname;
+
+            const messages: Ref<any | null> = ref(null);
+            const loading = ref(true);
+            const error: Ref<Error | null> = ref(null);
+
+            const api_port = 3030;
+            const chat_id = 1;
+
+            const chat_url = `http://${hostname}:${api_port}/chat/${chat_id}/message`
+            function fetchData() {
+                loading.value = true;
+
+                return fetch(chat_url, {
+                    method: 'GET',
+                    headers: {
+                    'content-type': 'application/json'
+                    }
+                }).then(res => {
+                    console.log("got result " + res.status);
+                    if (!res.ok) {
+                    error.value = new Error(res.statusText);;
+                    } else {
+                    res.text().then((str) => {
+                        console.log("got data " + str);
+                        messages.value = JSON.parse(str);
+                        loading.value = false;
+                    });
+                    }
+                })
             }
+
+            onMounted(() => {
+                fetchData();
+            });
+
+            return {
+                hostname,
+                messages,
+                loading,
+                error
+            };
         }
     }
 </script>

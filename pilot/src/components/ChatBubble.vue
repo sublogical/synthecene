@@ -2,7 +2,7 @@
     <div v-bind:class="{ agent: isAgent, user: isUser }" class="chat-bubble">
         <div class="chat-bubble__content"
         >
-            {{ data.text }}
+            {{ data.message }}
         </div>
     </div>
 </template>

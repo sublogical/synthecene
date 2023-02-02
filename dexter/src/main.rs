@@ -1,26 +1,38 @@
-use tokio::time::{Duration, sleep};
 use warp::Filter;
+use yansi::Paint;
 
-fn world() -> &'static str {
-    "Hello, world!\n"
+mod chat;
+
+pub trait PaintExt {
+    fn emoji(item: &str) -> Paint<&str>;
 }
 
-async fn delay(seconds: u64) -> Result<String, warp::Rejection> {
-    sleep(Duration::from_secs(seconds)).await;
-    Ok(format!("Waited for {} seconds\n", seconds))
+impl PaintExt for Paint<&str> {
+    /// Paint::masked(), but hidden on Windows due to broken output. See #1122.
+    fn emoji(_item: &str) -> Paint<&str> {
+        #[cfg(windows)] { Paint::masked("") }
+        #[cfg(not(windows))] { Paint::masked(_item) }
+    }
 }
-
 #[tokio::main]
 async fn main() {
-    let hello = warp::path!("hello")
-        .map(world);
+    env_logger::init();
 
-    let delay = warp::path!("delay" / u64)
-        .and_then(delay);
+    let port = 3030;
 
-    let routes = hello.or(delay);
+    let cors = warp::cors()
+        .allow_origins(vec!["http://127.0.0.1:3000", "https://localhost:3000", "http://localhost:3000/"])
+        .allow_headers(vec!["User-Agent", "Sec-Fetch-Mode", "Referer", "Origin", "Access-Control-Request-Method", "Access-Control-Request-Headers", "content-type"])
+        .allow_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"]);
+
+    let chat_routes = chat::routes();
+
+    let routes = chat_routes.with(cors).with(warp::log("cors test"));
+
+    println!("{} Starting Dexter", Paint::emoji("🦞"));
+    println!("  port: {}", Paint::blue(port).bold());
 
     warp::serve(routes)
-        .run(([127, 0, 0, 1], 3030))
+        .run(([127, 0, 0, 1], port))
         .await;
 }

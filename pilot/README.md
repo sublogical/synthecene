@@ -3,14 +3,19 @@
 ### TODO: Website
 
 * Navigation
-  * Basic site layout
-  * Expandable Nav Bar
-  * Application Bar
-  * Notification Badges with counts
+  * ~~Basic site layout~~
+  * ~~Expandable Nav Bar~~
+  * ~~Application Bar~~
+  * ~~Notification Badges with counts~~
 * Authentication
   * Auth0 - Google Login
   * Display User
   * Logout button
+* Chat
+  * Fetch Current Messages
+  * Post Message
+  * Use websockets to keep in sync
+  * Support typing messages
 * Networking
   * GraphQL Client
 * Crawler
