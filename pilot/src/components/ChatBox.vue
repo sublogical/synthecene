@@ -5,12 +5,16 @@
         </div>
     </div>
 
+    <div>
+        {{ messages.length }}
+    </div>
     <div id="Footer">
         <div class="ChatBox__Input">
             <v-text-field
                 hide-details
                 prepend-icon="mdi-magnify"
                 single-line
+                @keyup.enter="PostMessage"
             ></v-text-field>
         </div>
     </div>
@@ -19,6 +23,9 @@
 <script lang="ts">
     import axios from 'axios';
 
+    const hostname = location.hostname;
+    const api_port = 3030;
+
     interface Message {
         chat_id: string,
         message_id: string,
@@ -26,12 +33,14 @@
         message: string
     }
 
-    const hostname = location.hostname;
-    const api_port = 3030;
+    interface PostMessage {
+        agent: boolean,
+        message: string
+    }
 
     function GetMessages(chat_id: string): Promise<Array<Message>> {
         return axios.get<Array<Message>>(`http://${hostname}:${api_port}/chat/${chat_id}/message`)
-            .then((response: { data: Message; }) => {
+            .then((response: { data: Array<Message>; }) => {
                 console.log("GET Response")
                 console.log(response.data);
                 
@@ -40,14 +49,14 @@
     }
 
     function PostMessage(chat_id: string, message: string) {
-        return axios.post(`http://${hostname}:${api_port}/chat/${chat_id}/message`, {
+        let post_message: PostMessage = {
+            agent: false,
             message: message
-        })
+        }
+        return axios.post(`http://${hostname}:${api_port}/chat/${chat_id}/message`, post_message)
             .then((response: { data: Message; }) => {
                 console.log("POST Response")
-                console.log(response.data);
-                
-                return response.data;
+                console.log(response.data);                
             });
     }
 
@@ -58,43 +67,50 @@
 
     export default {
         components: { ChatBubble },
-        setup() {
-            const currentUrl = location.toString();
-            const hostname = location.hostname;
+        methods: {
+            PostMessage: function (event: KeyboardEvent) {
+                if (event.target != null) {
+                    let html_target = event.target as HTMLInputElement;
+                    console.log("posting new message: " + html_target.value);
+                    PostMessage(this.chat_id, html_target.value)
+                        .then(() => {
+                            this.RefreshChat();
+                        })
+                }
+            },
+            RefreshChat: function () {
+                console.log("refreshing chat");
 
-            const messages: Ref<any | null> = ref(null);
-            const loading = ref(true);
-            const error: Ref<Error | null> = ref(null);
+                this.loading = true;
 
-            const api_port = 3030;
-            const chat_id = "1";
-
-            const chat_url = `http://${hostname}:${api_port}/chat/${chat_id}/message`
-            function fetchData() {
-                loading.value = true;
-
-                GetMessages(chat_id)
+                GetMessages(this.chat_id)
                     .then((data: Array<Message>) => {
-                        console.log("got data " + data);
-                        messages.value = data;
-                        loading.value = false;
+                        console.log("Number of Messages: " + data.length);
+                        this.messages = data;
+                        this.loading = false;
                     })
                     .catch((error: any) => {
                         error.value = error;
                     });
-            }
 
-            onMounted(() => {
-                fetchData();
-            });
+            }
+        },
+        data() {
+            const messages:Array<Message> = [];
+            const loading = ref(true);
+            const error: Ref<Error | null> = ref(null);
+            const chat_id = "1";
 
             return {
-                hostname,
                 messages,
                 loading,
-                error
+                error,
+                chat_id
             };
-        }
+        },
+        mounted() {
+            this.RefreshChat();
+        },
     }
 </script>
 
