@@ -59,6 +59,21 @@ where
 }
 
 
+trait Node {
+    fn dependencies(&self) -> Vec<String>;
+    
+    async fn state(&self, sequence: u64) -> Box<dyn Any>;
+    
+}
+
+// NOTES:
+// support nodes that wait for state
+// support simple compute objects that don't need async or state
+// support simple compute objects that don't need async
+
+
+
+
 struct MyBuilder {}
 
 type ComputeBuilder<T,O,S> = dyn Fn(&str) -> Result<(Box<dyn Compute<T,O,S>>, S), Error>;

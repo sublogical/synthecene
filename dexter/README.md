@@ -35,6 +35,40 @@
 
 ### TODO
 
+* Inference
+  * Provider
+    * ~~PoC using huggingface API~~
+    * hugging face implementation
+    * openai implementation
+    * sagemaker implementation
+    * TFLite implementation
+  * Text
+    * fill-mask task
+    * summarization task
+    * question-answering task
+    * table question task
+    * sentence similarity task
+    * text classification task
+    * text generation task
+    * text-to-text task
+    * token classification task
+    * translation task
+    * zero-shot classification task
+    * conversational task
+    * feature extraction task
+  * Image
+    * image classification task
+    * object detection task
+    * image segmentation task
+    * image generation task
+  * Audio
+    * ASR task
+    * audio classification task
+    * TTS task
+* Retrieval
+  * FAISS
+  * ElasticSearch
+  * SCAN
 * Ergonomics
   * ~~print info on where it's running~~
   * ~~structured logs / telemetry~~
@@ -42,5 +76,18 @@
 * Security
   * support oauth
 * Chat API
-  * ~~CRUD routes~~
+  * ~~CRUD route design~~
+  * ~~CRUD route implementation~~
+  * ~~State object support~~
+  * ~~Create message~~
+  * ~~List message~~
   * WS interface
+* Store
+  * ~~Fake state object: ```HashMap<Vec<_>>```~~
+  * persist chats in mongodb
+  * subscribe to change stream in mongodb
+* Orchestration Graph
+* Agent
+  * design agent architecture
+  * get(response)
+  * get(intent)

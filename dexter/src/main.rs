@@ -2,6 +2,7 @@ use warp::Filter;
 use yansi::Paint;
 
 mod chat;
+mod inference;
 
 pub trait PaintExt {
     fn emoji(item: &str) -> Paint<&str>;
