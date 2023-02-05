@@ -1,1 +1,1 @@
-pub mod hosted;
+pub mod huggingface;

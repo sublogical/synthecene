@@ -44,8 +44,8 @@
     * TFLite implementation
   * Text
     * fill-mask task
-    * summarization task
-    * question-answering task
+    * ~~summarization task~~
+    * ~~question-answering task~~
     * table question task
     * sentence similarity task
     * text classification task
