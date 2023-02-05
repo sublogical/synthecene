@@ -36,35 +36,35 @@
 ### TODO
 
 * Inference
-  * Provider
-    * ~~PoC using huggingface API~~
-    * hugging face implementation
-    * openai implementation
-    * sagemaker implementation
-    * TFLite implementation
-  * Text
-    * fill-mask task
-    * ~~summarization task~~
-    * ~~question-answering task~~
-    * table question task
-    * sentence similarity task
-    * text classification task
-    * text generation task
-    * text-to-text task
-    * token classification task
-    * translation task
-    * zero-shot classification task
-    * conversational task
-    * feature extraction task
-  * Image
-    * image classification task
-    * object detection task
-    * image segmentation task
-    * image generation task
-  * Audio
-    * ASR task
-    * audio classification task
-    * TTS task
+  * Hugging Face
+    * Text
+      * fill-mask task
+      * ~~summarization task~~
+      * ~~question-answering task~~
+      * table question task
+      * sentence similarity task
+      * text classification task
+      * text generation task
+      * text-to-text task
+      * token classification task
+      * translation task
+      * zero-shot classification task
+      * conversational task
+      * feature extraction task
+    * Image
+      * image classification task
+      * object detection task
+      * image segmentation task
+      * image generation task
+    * Audio
+      * ASR task
+      * audio classification task
+      * TTS task
+  * OpenAI
+    * Embedding
+
+  * SageMaker
+  * TFLite (local)
 * Retrieval
   * FAISS
   * ElasticSearch
