@@ -3,6 +3,7 @@ use tokio::{fs::File, io::AsyncReadExt};
 pub mod huggingface;
 pub mod openai;
 
+type Tensor<T> = Vec<T>;
 
 #[derive(Debug)]
 pub enum Error {

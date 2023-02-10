@@ -152,3 +152,26 @@ fn compute3<O, I1, I2, I3> (input1: I1, input2: I2, input3: I3) -> O
 {
     todo!()
 }
+
+
+#[tokio::test]
+async fn test_get_wait_on_put() {
+    let mut graph = Graph::new();
+    let mut universe = graph.add_universe("query");
+
+    let node = graph.add_node("query:123/query-text", SettableNode::new(None));
+
+    let fut = graph.get("dex://query:123/query-text");
+    
+    assert_eq!(fut.poll(), Poll::Pending);
+
+    graph.put("dex://query:123/query-text", "hello world".to_string());
+    let result = fut.await.unwrap();
+    assert_eq!(result, "hello world");
+}
+
+
+
+
+
+

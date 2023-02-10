@@ -2,7 +2,22 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::{fs::File, io::AsyncReadExt};
 
+use crate::inference::Tensor;
+
 use super::{Key, Error, get_key};
+
+async fn run_raw_model_inference_huggingface(key: &Key, model: &str, payload: String) -> Result<String, Error> {    
+    let url = format!("https://api-inference.huggingface.co/models/{}", model);
+
+    run_raw_inference_huggingface(key, &url, payload).await
+}
+
+async fn run_raw_pipeline_inference_huggingface(key: &Key, pipeline: &str, model: &str, payload: String) -> Result<String, Error> {    
+    let url = format!("https://api-inference.huggingface.co/pipeline/{}/{}", pipeline, model);
+
+    println!("url: {}", url);
+    run_raw_inference_huggingface(key, &url, payload).await
+}
 
 async fn run_raw_inference_huggingface(key: &Key, model: &str, payload: String) -> Result<String, Error> {    
     let api_token = get_key(key).await
@@ -152,6 +167,36 @@ pub async fn run_huggingface_qa(key: &Key, model: &str, task: &QuestionAnswering
     Ok(output)
 }
 
+pub async fn run_huggingface_embedding<T:num::Float + for<'a> serde::Deserialize<'a>>(
+    key: &Key, 
+    model: &str, 
+    inputs: Vec<&str>, 
+    options: Option<InferenceOptions>) -> Result<Vec<Tensor<T>>, Error> 
+{
+
+    #[derive(Debug, Clone, Serialize, Default)]
+    struct FeatureExtractionPayload<'a> {
+        inputs: Vec<&'a str>,
+
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        options: Option<InferenceOptions>,
+    }
+
+    let pipeline = "feature-extraction";
+    let payload = FeatureExtractionPayload { inputs, options };
+    let serialized_payload = serde_json::to_string(&payload)
+        .map_err(Error::SerializeError)?;
+
+    println!("REQUEST: {}", serde_json::to_string_pretty(&payload).unwrap());
+
+    let res = run_raw_pipeline_inference_huggingface(key, pipeline, model, serialized_payload).await?;
+
+    let output: Vec<Tensor<T>> = serde_json::from_str(&res)
+        .map_err(Error::DeserializeError)?;
+
+    Ok(output)
+}
 
 
 #[tokio::test]
@@ -183,6 +228,16 @@ async fn test_huggingface_summarization() {
     assert!(output.len() > 0);
     assert!(output[0].summary_text.len() > 0);
     assert!(output[0].summary_text.len() < text.len());
+}
+
+#[tokio::test]
+async fn test_huggingface_embedding() {
+    let key = Key::File("/home/sublogical/.api/huggingface".to_string());
+    let model = "sentence-transformers/all-MiniLM-L6-v2";
+    let text = "The tower is 324 metres (1,063 ft) tall, about the same height as an 81-storey building, and the tallest structure in Paris";
+
+    let output = run_huggingface_embedding::<f64>(&key, model, vec![text], None).await.unwrap();
+    println!("{:?}", output);
 }
 
 #[tokio::test]

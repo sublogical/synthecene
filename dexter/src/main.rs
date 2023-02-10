@@ -1,7 +1,8 @@
 use warp::Filter;
 use yansi::Paint;
 
-mod chat;
+mod api;
+mod dexter;
 mod inference;
 
 pub trait PaintExt {
@@ -22,11 +23,12 @@ async fn main() {
     let port = 3030;
 
     let cors = warp::cors()
-        .allow_origins(vec!["http://127.0.0.1:3000", "https://localhost:3000", "http://localhost:3000/"])
+        .allow_any_origin()
+//        .allow_origins(vec!["http://127.0.0.1:3000", "https://localhost:3000", "http://localhost:3000/"])
         .allow_headers(vec!["User-Agent", "Sec-Fetch-Mode", "Referer", "Origin", "Access-Control-Request-Method", "Access-Control-Request-Headers", "content-type"])
         .allow_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"]);
 
-    let chat_routes = chat::routes();
+    let chat_routes = api::chat::routes().or(api::task::routes());
 
     let routes = chat_routes.with(cors).with(warp::log("cors test"));
 

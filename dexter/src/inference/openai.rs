@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::{Key, Error, get_key};
+use super::{Key, Error, get_key, Tensor};
 
 
 
@@ -11,19 +11,17 @@ pub struct Usage {
     pub total_tokens: usize,
 }
 
-type Embedding = Vec<f64>;
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct EmbeddingResponseData {
+pub struct EmbeddingResponseData<T:num::Float> {
     pub object: String,
-    pub embedding: Embedding,
+    pub embedding: Tensor<T>,
     pub index: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct EmbeddingResponse {
+pub struct EmbeddingResponse<T:num::Float> {
     pub object: String,
-    pub data: Vec<EmbeddingResponseData>,
+    pub data: Vec<EmbeddingResponseData<T>>,
     pub model: String,
     pub usage: Usage,
 }
@@ -55,10 +53,10 @@ pub async fn run_openai_raw_inference(key: &Key, model: &str, url: &str, payload
     }
 }
 
-pub async fn run_openai_embedding(
+pub async fn run_openai_embedding<T:num::Float + for<'a> serde::Deserialize<'a>>(
     key: &Key, 
     model: &str, 
-    inputs: Vec<&str>) -> Result<EmbeddingResponse, Error>
+    inputs: Vec<&str>) -> Result<EmbeddingResponse<T>, Error>
 {
     let payload = json!({
         "model": model,
@@ -72,7 +70,7 @@ pub async fn run_openai_embedding(
 
     let res = run_openai_raw_inference(key, model, url, serialized_payload).await?;
 
-    let output: EmbeddingResponse = serde_json::from_str(&res)
+    let output: EmbeddingResponse<T> = serde_json::from_str(&res)
         .map_err(Error::DeserializeError)?;
 
     Ok(output)
@@ -84,7 +82,7 @@ async fn test_openai_embedding() {
     let model = "text-embedding-ada-002";
     let input = vec!["Get a vector representation of a given input that can be easily consumed by machine learning models and algorithms"];
 
-    let output = run_openai_embedding(&key, model, input).await.unwrap();
+    let output:EmbeddingResponse<f64> = run_openai_embedding(&key, model, input).await.unwrap();
     assert!(output.data.len() > 0);
     assert!(output.data[0].embedding.len() > 0);
     assert!(output.usage.total_tokens == 19);
@@ -97,7 +95,7 @@ fn test_openai_embedding_deserialization() {
     let path = "resources/test/inference/openai_embedding_response.json";
     let raw = std::fs::read(path).unwrap();
     let text = String::from_utf8(raw).unwrap();
-    let output: EmbeddingResponse = serde_json::from_str(&text).unwrap();
+    let output: EmbeddingResponse<f64> = serde_json::from_str(&text).unwrap();
 
     assert!(output.data.len() > 0);
     assert!(output.data[0].embedding.len() > 0);
