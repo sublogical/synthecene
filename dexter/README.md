@@ -32,6 +32,31 @@
   * GET  /chat/{session} - list messages
 
 
+### TODO: Actor System
+
+* Base Actor System
+  * ~~typed messages and actors~~
+  * ~~tell pattern~~
+  * ~~ask pattern~~
+  * behavior
+    * ~~base pattern~~
+    * stopped state
+    * signal support
+  * child pattern
+    * context.spawn
+    * child signals
+  * pipe-to-self pattern
+  * supervision pattern
+  * persistence
+    * persistence signals
+  * clustering
+    * gossip discovery / state synchronization
+    * distributed data
+    
+* Unruly Goats
+  * settable node
+  * lambda node
+  * meta node
 
 ### TODO
 
