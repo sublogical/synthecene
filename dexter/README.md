@@ -41,10 +41,14 @@
   * behavior
     * ~~base pattern~~
     * stopped state
+    * context support
     * signal support
+    * splittable actorref (take a reference only to one message it handles)
   * child pattern
     * context.spawn
+    * spawn protocol
     * child signals
+  * watch pattern
   * pipe-to-self pattern
   * supervision pattern
   * persistence
@@ -52,7 +56,7 @@
   * clustering
     * gossip discovery / state synchronization
     * distributed data
-    
+
 * Unruly Goats
   * settable node
   * lambda node
