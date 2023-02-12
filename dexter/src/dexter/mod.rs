@@ -1,73 +1,83 @@
-use std::mem::replace;
+use std::{mem::replace, fmt};
 
+use derivative::Derivative;
 use tokio::sync::mpsc;
 use std::fmt::Debug;
 
 pub mod settable;
 
-#[derive(Debug)]
-pub enum BehaviorMode<E> {
+enum Behavior<T, E> 
+where
+    T: Send + 'static,
+    E: Debug + Send + 'static,
+{
     NoBehavior,
+    Running {
+        proc: Box<dyn FnOnce(&mut ActorContext<T,E>, T)->Behavior<T,E> + Send + Sync + 'static>
+    },
+    RunningWatcher {
+        proc: Box<dyn FnOnce(&mut ActorContext<T,E>, T)->Behavior<T,E> + Send + Sync + 'static>,
+        signal_proc: Box<dyn FnOnce(&mut ActorContext<T,E>, Signal)->Behavior<T,E> + Send + Sync + 'static>
+    },
     RecoverableError(E),
     UnrecoverableError(E),
     Stopped,
 }
 
-pub type BehaviorState<T, E> = std::result::Result<Behavior<T, E>, BehaviorMode<E>>;
-
-pub struct Behavior<T, E> 
+impl <T, E> fmt::Display for Behavior<T, E> 
 where
     T: Send + 'static,
-    E: Debug + Send + 'static
+    E: Debug + Send + 'static,
 {
-    proc: Box<dyn FnOnce(&mut ActorContext<T,E>, T) -> BehaviorState<T,E> + Send + 'static>,
-    signal_proc: Option<Box<dyn FnOnce(&mut ActorContext<T,E>,Signal) -> BehaviorState<T,E> + Send + 'static>>,
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let sz = match self {
+            Behavior::NoBehavior => "no behavior",
+            Behavior::Running { proc } => "running",
+            Behavior::RunningWatcher { proc, signal_proc } => "running-watcher",
+            Behavior::RecoverableError(_) => "error: recoverable",
+            Behavior::UnrecoverableError(_) => "error: unrecoverable",
+            Behavior::Stopped => "stopped",
+        };
+
+        write!(f, "{}", sz)
+    }
 }
 
-impl <T:Send, E> Behavior<T, E> 
+impl <T, E> Behavior<T, E> 
 where
     T: Send + 'static,
     E: Debug + Send + 'static
 {
-    fn new<F>(proc: F) -> BehaviorState<T, E> 
-    where F: FnOnce(&mut ActorContext<T,E>,T) -> BehaviorState<T, E> + Send +'static
-    {
-        Ok(Behavior {
-            proc: Box::new(proc),
-            signal_proc: None
-        })
+    fn running(proc: impl FnOnce(&mut ActorContext<T,E>, T)->Behavior<T,E> + Send + Sync + 'static) -> Self {
+        Self::Running {
+            proc: Box::new(proc)
+        }
     }
 
-    fn stopped() -> BehaviorState<T, E>
-    {
-        Err(BehaviorMode::Stopped)
+    fn recoverable(e:E) -> Self {
+        Self::RecoverableError(e)
     }
 
-    fn recoverable(error: E) -> BehaviorState<T, E>
-    {
-        Err(BehaviorMode::RecoverableError(error))
+    fn unrecoverable(e:E) -> Self {
+        Self::UnrecoverableError(e)
     }
-
-    /**
-     * Create a behavior that will never recover from an error.
-     */
-    fn unrecoverable(error: E) -> BehaviorState<T, E>
-    {
-        Err(BehaviorMode::UnrecoverableError(error))
-    }
-
     
-    /**
-     * Add a signal handler to the behavior.
-     */
-    fn with_signal<F>(self: Result<Self, E>, signal_proc: F) -> BehaviorState<T, E>
-    where
-        F: FnOnce(&mut ActorContext<T,E>,Signal) -> BehaviorState<T, E> + Send + 'static
-    {
-        Ok(Behavior {
-            proc: self.proc,
-            signal_proc: Some(Box::new(signal_proc))
-        })
+    fn stopped() -> Self {
+        Self::Stopped
+    }
+    
+    fn with_signal(self, signal_proc: impl FnOnce(&mut ActorContext<T,E>, Signal)->Behavior<T,E> + Send + Sync + 'static) -> Self {
+        match self {
+            Self::Running{ proc } => Self::RunningWatcher { proc, signal_proc: Box::new(signal_proc) },
+            _ => self
+        }
+    }
+
+    fn is_runnable(&self) -> bool {
+        match self {
+            Self::Running { .. } | Self::RunningWatcher { .. } => true,
+            _ => false
+        }
     }
 }
 
@@ -90,13 +100,13 @@ where
 
 impl <T, E> ActorSystem<T, E> 
 where
-    T: Send + 'static,
+    T: Debug + Send + 'static,
     E: Debug + Send + 'static
 {
-    fn new(guardian: BehaviorState<T, E>, name: &str) -> ActorSystem<T, E> 
+    fn new(guardian: Behavior<T, E>, name: &str) -> ActorSystem<T, E> 
     {
         let mut root_context = ActorContext::root();
-        let guardian = root_context.spawn(guardian);
+        let guardian = root_context.spawn(guardian, name);
 
         ActorSystem {
             root_context,
@@ -133,17 +143,19 @@ where
 {
     receiver: mpsc::Receiver<Envelope<T>>,
     sender: mpsc::Sender<Envelope<T>>,
-    state: BehaviorState<T, E>
+
+    state: Behavior<T, E>
 }
 
 impl <T, E> ActorContext<T,E>
 where
-    T: Send + 'static,
+    T: Debug + Send + 'static,
     E: Debug + Send + 'static
 {
-    pub fn spawn(&mut self, state: BehaviorState<T, E>) -> ActorRef<T>
+    pub fn spawn<TT, EE> (&mut self, state: Behavior<TT, EE>, name: &str) -> ActorRef<TT>
     where
-        E: Debug + Send + 'static
+        TT: Debug + Send + 'static,
+        EE: Debug + Send + 'static
     {
         let (sender, receiver) = mpsc::channel(8);
         let mut actor = ActorContext {
@@ -165,39 +177,26 @@ where
     // todo: send started and post-stopped signals to the the actor
 
     async fn run(&mut self) {
-        while !self.state.is_err() {
+        while self.state.is_runnable() {
             if let Some(env) = self.receiver.recv().await {
-                if self.state.is_err() {
-                    // since there is no way for the state to be mutated 
-                    // outside of this loop, this shouldn't be a state. 
-                    // Best to panic and fix the bug.
-                    panic!("Actor is in error state in recv loop");
-                }
-                let prior_behavior = replace(&mut self.state, Err(BehaviorMode::NoBehavior)).unwrap();
-                match env {
-                    Envelope::Signal(signal) => {
+                let prior_behavior = replace(&mut self.state, Behavior::NoBehavior);
+                self.state = match env {
+                    Envelope::Signal(signal) => match prior_behavior {
                         // todo: route to behavior's signal proc
-                        match prior_behavior.signal_proc {
-                            Some(signal_proc) => {
-                                self.state = signal_proc(self, signal)
-                                    .map_err(|mode| {
-                                        todo!("Handle mode: {:?}", mode);
-                                        mode
-                                    })
-                            },
-                            None => {
-                                println!("Actor received signal: {:?} but no signal proc was defined", signal);
-                            }
+                        Behavior::RunningWatcher { signal_proc, .. } => signal_proc(self, signal),
+                        _ => {
+                            println!("Actor received signal: {:?} but no signal proc was defined", signal);
+                            prior_behavior
                         }
                     },
-                    Envelope::Message(msg) => {
-                        self.state = (prior_behavior.proc)(self, msg)
-                            .map_err(|mode| {
-                                todo!("Handle mode: {:?}", mode);
-                                mode
-                            })
+                    Envelope::Message(msg) => match prior_behavior {
+                        Behavior::Running { proc } | Behavior::RunningWatcher { proc, .. } => proc(self, msg),
+                        _ => {
+                            println!("Actor received message: {:?} but no message proc was defined", msg);
+                            prior_behavior
+                        }
                     }
-                }
+                };
             }
         }
     }
@@ -207,7 +206,7 @@ where
         ActorContext {
             receiver,
             sender,
-            state: Err(BehaviorMode::NoBehavior)
+            state: Behavior::NoBehavior
         }
     }
 }
@@ -267,8 +266,9 @@ mod test {
     #[tokio::test]
     async fn test_simple_actor() {
 
-        fn basic() -> BehaviorState<(String, ActorRef<usize>), ()> {
-            Behavior::new(move |_, (text, respond_to):(String, ActorRef<usize>)| {
+        fn basic() -> Behavior<(String, ActorRef<usize>), ()> {
+            Behavior::running(move |_, (text, respond_to):(String, ActorRef<usize>)| {
+                println!("Received message: {:?}", text);
                 tokio::spawn(async move {respond_to.tell(text.len()).await});
                 basic()
             })
@@ -281,8 +281,8 @@ mod test {
 
     #[tokio::test]
     async fn test_stateful_actor() {
-        fn count(num:usize) -> BehaviorState<(String, ActorRef<usize>), ()> {
-            Behavior::new(move |_, (text, respond_to):(String, ActorRef<usize>)| {
+        fn count(num:usize) -> Behavior<(String, ActorRef<usize>), ()> {
+            Behavior::running(move |_, (text, respond_to):(String, ActorRef<usize>)| {
                 let new_num = text.len() + num;
                 tokio::spawn(async move {respond_to.tell(new_num).await});
                 count(new_num)
@@ -297,65 +297,70 @@ mod test {
     }
 
     async fn test_actor_lifecycle() {
+        #[derive(Debug)]
         struct SpawnJob {};
+
+        #[derive(Debug)]
         struct StartJob {};
 
         let record = Arc::new(RwLock::new(vec![]));
         
-        fn job(num: usize, record: Arc<RwLock<Vec<String>>>) -> BehaviorState<StartJob, ()> {
-            Behavior::new(move |_, _| {
+        fn job(num: usize, record: Arc<RwLock<Vec<String>>>) -> Behavior<StartJob, ()> {
+            let signal_record = record.clone();
+
+            Behavior::running(move |_, _| {
                 record.write().unwrap().push(format!("job {}", num));
                 if num == 0 {
-                    Behavior::stopped()
+                    Behavior::Stopped
                 } else {
                     job(num - 1, record)
                 }
             })
             .with_signal(move |_, signal| {
                 match signal {
-                    Signal::Started => {
-                        record.write().unwrap().push(format!("job started"));
-                        println!("Started");
+                    Signal::ChildTerminated  => {
+                        panic!{"should not receive child terminated, doesn't create children"}
                     },
-                    Signal::PostStopped => {
-                        record.write().unwrap().push(format!("job stopped"));
-                        println!("Stopped");
+                    Signal::Started => {
+                        signal_record.write().unwrap().push(format!("job started"));
+                    },
+                    Signal::Stopped => {
+                        signal_record.write().unwrap().push(format!("job stopped"));
                     }
                 }
+                job(num, signal_record)
             })
         }
     
-        fn controller(record: Arc<RwLock<Vec<String>>>) -> BehaviorState<SpawnJob, ()> {
-            Behavior::with_context(|actor_context| {
-                Behavior::new(move |start:SpawnJob| {
-                    record.write().unwrap().push(format!("start job"));
-                    let job = actor_context.spawn(job(10, record.clone()), "job");
-                    tokio::spawn(async move { job.tell(()).await; });
-                    controller(record)
-                })
-                .with_signal(move |signal| {
-                    match signal {
-                        Signal::ChildTerminated { name, reason } => {
-                            record.write().unwrap().push(format!("child {} terminated: {:?}", name, reason));
-                        },
-                        Signal::Started => {
-                            record.write().unwrap().push(format!("controller started"));
-                            println!("Started");
-                        },
-                        Signal::PostStopped => {
-                            record.write().unwrap().push(format!("controller stopped"));
-                            println!("Stopped");
-                        }
+        fn controller(record: Arc<RwLock<Vec<String>>>) -> Behavior<SpawnJob, ()> {
+            let signal_record = record.clone();
+
+            Behavior::running(move |actor_context, start:SpawnJob| {
+                record.write().unwrap().push(format!("start job"));
+                let job = actor_context.spawn(job(10, record.clone()), "job");
+                tokio::spawn(async move { job.tell(StartJob {}).await; });
+                controller(record)
+            })
+            .with_signal(move |_, signal| {
+                match signal {
+                    Signal::ChildTerminated  => {
+                        signal_record.write().unwrap().push(format!("child terminated"));
+                    },
+                    Signal::Started => {
+                        signal_record.write().unwrap().push(format!("controller started"));
+                    },
+                    Signal::Stopped => {
+                        signal_record.write().unwrap().push(format!("controller stopped"));
                     }
-                })
-    
+                }
+                controller(signal_record)
             })
         }
 
         let system = ActorSystem::new(controller(record.clone()), "test");
-        system.ask(|respond_to| ("hello".to_string(), respond_to)).await;
-        system.ask(|respond_to| ("hello".to_string(), respond_to)).await;
-        let value = system.ask(|respond_to| ("hello".to_string(), respond_to)).await;
-        assert_eq!(value, 15);
+        system.tell(SpawnJob {}).await;
+
+        // todo: wait for job to finish
+        // todo: validate that the lifecycle events were recorded in correct order
     }
 }

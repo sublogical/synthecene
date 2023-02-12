@@ -1,6 +1,6 @@
 use log::debug;
 
-use super::{ActorRef, Behavior, BehaviorState};
+use super::{ActorRef, Behavior};
 use std::fmt::Debug;
 
 #[derive(Debug)]
@@ -44,7 +44,7 @@ impl SettableNodeBuilder {
 }
 
 impl SettableNode {
-    fn configure<T, F>(fun: F) -> BehaviorState<SettableMsg<T>, Error>
+    fn configure<T, F>(fun: F) -> Behavior<SettableMsg<T>, Error>
     where
         T: Clone + Debug + Send + Sync + 'static,
         F: FnOnce(SettableNodeBuilder) -> SettableNodeBuilder
@@ -52,22 +52,22 @@ impl SettableNode {
         Self::apply(fun(SettableNodeBuilder::new()).config)
     }
 
-    fn default<T>() -> BehaviorState<SettableMsg<T>, Error>
+    fn default<T>() -> Behavior<SettableMsg<T>, Error>
     where 
         T: Clone + Debug + Send + Sync + 'static
     {
         Self::apply(SettableNodeConfig::default())
     }
 
-    fn apply<T>(config: SettableNodeConfig) -> BehaviorState<SettableMsg<T>, Error> 
+    fn apply<T>(config: SettableNodeConfig) -> Behavior<SettableMsg<T>, Error> 
     where 
         T: Clone + Debug + Send + Sync + 'static 
     {
         Self::empty(config, vec![])
     }
 
-    fn empty<T: Clone + Debug + Send + Sync + 'static>(config: SettableNodeConfig, mut pending: Vec<ActorRef<T>>) -> BehaviorState<SettableMsg<T>, Error> {
-        Behavior::new(move |_, msg:SettableMsg<T>| {
+    fn empty<T: Clone + Debug + Send + Sync + 'static>(config: SettableNodeConfig, mut pending: Vec<ActorRef<T>>) -> Behavior<SettableMsg<T>, Error> {
+        Behavior::running(move |_, msg:SettableMsg<T>| {
             println!("SettableNode::empty: {:?}", msg);
             match msg {
                 SettableMsg::Set(value) => {
@@ -96,8 +96,8 @@ impl SettableNode {
         
     }
 
-    fn resolved<T: Clone + Send + Sync + 'static>(config: SettableNodeConfig, value: T) -> BehaviorState<SettableMsg<T>, Error> {
-        Behavior::new(move |_, msg:SettableMsg<T>| {
+    fn resolved<T: Clone + Send + Sync + 'static>(config: SettableNodeConfig, value: T) -> Behavior<SettableMsg<T>, Error> {
+        Behavior::running(move |_, msg:SettableMsg<T>| {
             match msg {
                 SettableMsg::Set(new_value) => {
                     if config.fail_on_reset {
