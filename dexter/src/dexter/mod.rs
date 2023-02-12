@@ -1,7 +1,7 @@
-use std::{mem::replace, fmt};
+use std::{mem::replace, fmt, sync::{Arc, RwLock}};
 
 use derivative::Derivative;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc};
 use std::fmt::Debug;
 
 pub mod settable;
@@ -19,6 +19,9 @@ where
         proc: Box<dyn FnOnce(&mut ActorContext<T,E>, T)->Behavior<T,E> + Send + Sync + 'static>,
         signal_proc: Box<dyn FnOnce(&mut ActorContext<T,E>, Signal)->Behavior<T,E> + Send + Sync + 'static>
     },
+    UnrunnableWatcher {
+        signal_proc: Box<dyn FnOnce(&mut ActorContext<T,E>, Signal)->Behavior<T,E> + Send + Sync + 'static>
+    },
     RecoverableError(E),
     UnrecoverableError(E),
     Stopped,
@@ -32,8 +35,9 @@ where
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let sz = match self {
             Behavior::NoBehavior => "no behavior",
-            Behavior::Running { proc } => "running",
-            Behavior::RunningWatcher { proc, signal_proc } => "running-watcher",
+            Behavior::Running { proc:_ } => "running",
+            Behavior::RunningWatcher { proc:_, signal_proc:_ } => "running-watcher",
+            Behavior::UnrunnableWatcher { signal_proc:_ } => "unrunnable-watcher",
             Behavior::RecoverableError(_) => "error: recoverable",
             Behavior::UnrecoverableError(_) => "error: unrecoverable",
             Behavior::Stopped => "stopped",
@@ -88,6 +92,12 @@ enum Signal {
     ChildTerminated
 }
 
+#[derive(Debug, PartialEq, Eq, Hash)]
+enum SystemState {
+    Running,
+    Stopped
+}
+
 struct ActorSystem<T, E>
 where
     T: Send + 'static,
@@ -95,6 +105,7 @@ where
 {
     root_context: ActorContext<T, E>,
     guardian: ActorRef<T>,
+    state: Arc<RwLock<SystemState>>,
     phantom: std::marker::PhantomData<E>,
 }
 
@@ -105,12 +116,20 @@ where
 {
     fn new(guardian: Behavior<T, E>, name: &str) -> ActorSystem<T, E> 
     {
-        let mut root_context = ActorContext::root();
-        let guardian = root_context.spawn(guardian, name);
+        let state = Arc::new(RwLock::new(SystemState::Running));
+
+        let signal_state = state.clone();
+        let mut root_context = ActorContext::root();        
+        let guardian = root_context.spawn_with_term_proc(guardian, name, move |state| {
+            println!("guardian terminated: {}", state);
+            let mut state = signal_state.write().unwrap();
+            *state = SystemState::Stopped;
+        });
 
         ActorSystem {
             root_context,
             guardian,
+            state,
             phantom: std::marker::PhantomData,
         }
     }
@@ -127,10 +146,11 @@ where
     }
 
     pub fn is_stopped(&self) -> bool {
-        todo!("Implement is_stopped()");
+        *(self.state.read().unwrap()) == SystemState::Stopped
     }
 }
 
+#[derive(Debug)]
 enum Envelope<T> {
     Signal(Signal),
     Message(T)
@@ -157,6 +177,19 @@ where
         TT: Debug + Send + 'static,
         EE: Debug + Send + 'static
     {
+        self.spawn_with_term_proc(state, name, |state| {
+            println!("child terminated: {}", state);
+        })
+    }
+
+    pub fn spawn_with_term_proc<TT, EE> (&mut self, 
+        state: Behavior<TT, EE>, 
+        name: &str, 
+        term_proc: impl FnOnce(Behavior<TT,EE>)-> () + Send + 'static) -> ActorRef<TT>
+    where
+        TT: Debug + Send + 'static,
+        EE: Debug + Send + 'static
+    {
         let (sender, receiver) = mpsc::channel(8);
         let mut actor = ActorContext {
             receiver,
@@ -164,33 +197,43 @@ where
             state
         };
 
+        let parent_sender = self.sender.clone();
+
         tokio::spawn(async move {
-            // send ChildTerminated signal to myself
-            actor.run().await;
-            // send ChildTerminated signal to myself
+            // todo: send ChildStarted signal to myself (must use self.sender)
+            let child_state = actor.run().await;
+
+            // todo: figure out how to encode the child's error type in the signal, anyhow?
+            let signal = Signal::ChildTerminated;
+
+            println!("root context signal received: {:?}", signal);
+            // Send the ChildTerminated signal to the parent
+            let res = parent_sender.send(Envelope::Signal(signal)).await;
+            println!("sent tp parent: {:?}", res);
+
+            term_proc(child_state);
         });
 
         ActorRef { sender }
     }
 
-
     // todo: send started and post-stopped signals to the the actor
 
-    async fn run(&mut self) {
+    async fn run(mut self) -> Behavior<T, E> {
         while self.state.is_runnable() {
             if let Some(env) = self.receiver.recv().await {
                 let prior_behavior = replace(&mut self.state, Behavior::NoBehavior);
                 self.state = match env {
                     Envelope::Signal(signal) => match prior_behavior {
                         // todo: route to behavior's signal proc
-                        Behavior::RunningWatcher { signal_proc, .. } => signal_proc(self, signal),
+                        Behavior::RunningWatcher { signal_proc, .. } => signal_proc(&mut self, signal),
                         _ => {
                             println!("Actor received signal: {:?} but no signal proc was defined", signal);
                             prior_behavior
                         }
                     },
                     Envelope::Message(msg) => match prior_behavior {
-                        Behavior::Running { proc } | Behavior::RunningWatcher { proc, .. } => proc(self, msg),
+                        Behavior::Running { proc } | Behavior::RunningWatcher { proc, .. } => proc(&mut self, msg),
                         _ => {
                             println!("Actor received message: {:?} but no message proc was defined", msg);
                             prior_behavior
@@ -199,6 +242,8 @@ where
                 };
             }
         }
+        println!("actor stopped with state: {}", self.state);
+        self.state
     }
 
     fn root() -> ActorContext<T, E> {

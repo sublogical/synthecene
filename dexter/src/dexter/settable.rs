@@ -96,13 +96,15 @@ impl SettableNode {
         
     }
 
-    fn resolved<T: Clone + Send + Sync + 'static>(config: SettableNodeConfig, value: T) -> Behavior<SettableMsg<T>, Error> {
+    fn resolved<T: Clone + Debug + Send + Sync + 'static>(config: SettableNodeConfig, value: T) -> Behavior<SettableMsg<T>, Error> {
         Behavior::running(move |_, msg:SettableMsg<T>| {
             match msg {
                 SettableMsg::Set(new_value) => {
                     if config.fail_on_reset {
+                        println!("SettableNode::resolved: ResetIsNotAllowed");
                         Behavior::unrecoverable(Error::ResetIsNotAllowed)
                     } else {
+                        println!("SettableNode::resolved: set new value {:?}", new_value);
                         Self::resolved(config, new_value)
                     }
                 }
@@ -163,7 +165,9 @@ mod test {
             SettableNode::configure::<i32, _>(|builder| builder.fail_on_reset()), "unresettable_node"));
 
         system.tell(SettableMsg::Set(42)).await;
+        sleep(Duration::from_millis(100)).await;
         system.tell(SettableMsg::Set(52)).await;
+        sleep(Duration::from_millis(100)).await;
 
         assert!(system.is_stopped());
     }
