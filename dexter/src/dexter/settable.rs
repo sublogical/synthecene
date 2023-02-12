@@ -67,7 +67,7 @@ impl SettableNode {
     }
 
     fn empty<T: Clone + Debug + Send + Sync + 'static>(config: SettableNodeConfig, mut pending: Vec<ActorRef<T>>) -> BehaviorState<SettableMsg<T>, Error> {
-        Behavior::new(move |msg:SettableMsg<T>| {
+        Behavior::new(move |_, msg:SettableMsg<T>| {
             println!("SettableNode::empty: {:?}", msg);
             match msg {
                 SettableMsg::Set(value) => {
@@ -97,7 +97,7 @@ impl SettableNode {
     }
 
     fn resolved<T: Clone + Send + Sync + 'static>(config: SettableNodeConfig, value: T) -> BehaviorState<SettableMsg<T>, Error> {
-        Behavior::new(move |msg:SettableMsg<T>| {
+        Behavior::new(move |_, msg:SettableMsg<T>| {
             match msg {
                 SettableMsg::Set(new_value) => {
                     if config.fail_on_reset {
@@ -157,7 +157,7 @@ mod test {
         assert_eq!(current, Some(42));
     }
 
-//    #[tokio::test] NOT YET IMPLEMENTED
+    #[tokio::test]
     async fn test_unresettable_node() {
         let system = Arc::new(ActorSystem::new(
             SettableNode::configure::<i32, _>(|builder| builder.fail_on_reset()), "unresettable_node"));
