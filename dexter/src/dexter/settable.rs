@@ -44,7 +44,8 @@ impl SettableNodeBuilder {
 }
 
 impl SettableNode {
-    fn configure<T, F>(fun: F) -> Behavior<SettableMsg<T>, Error>
+    // todo: make settable node have a return type. If commanded to stop, it should release the value it was set to.
+    fn configure<T, F>(fun: F) -> Behavior<SettableMsg<T>, (), Error>
     where
         T: Clone + Debug + Send + Sync + 'static,
         F: FnOnce(SettableNodeBuilder) -> SettableNodeBuilder
@@ -52,21 +53,21 @@ impl SettableNode {
         Self::apply(fun(SettableNodeBuilder::new()).config)
     }
 
-    fn default<T>() -> Behavior<SettableMsg<T>, Error>
+    fn default<T>() -> Behavior<SettableMsg<T>, (), Error>
     where 
         T: Clone + Debug + Send + Sync + 'static
     {
         Self::apply(SettableNodeConfig::default())
     }
 
-    fn apply<T>(config: SettableNodeConfig) -> Behavior<SettableMsg<T>, Error> 
+    fn apply<T>(config: SettableNodeConfig) -> Behavior<SettableMsg<T>, (), Error> 
     where 
         T: Clone + Debug + Send + Sync + 'static 
     {
         Self::empty(config, vec![])
     }
 
-    fn empty<T: Clone + Debug + Send + Sync + 'static>(config: SettableNodeConfig, mut pending: Vec<ActorRef<T>>) -> Behavior<SettableMsg<T>, Error> {
+    fn empty<T: Clone + Debug + Send + Sync + 'static>(config: SettableNodeConfig, mut pending: Vec<ActorRef<T>>) -> Behavior<SettableMsg<T>, (), Error> {
         Behavior::running(move |_, msg:SettableMsg<T>| {
             println!("SettableNode::empty: {:?}", msg);
             match msg {
@@ -96,7 +97,7 @@ impl SettableNode {
         
     }
 
-    fn resolved<T: Clone + Debug + Send + Sync + 'static>(config: SettableNodeConfig, value: T) -> Behavior<SettableMsg<T>, Error> {
+    fn resolved<T: Clone + Debug + Send + Sync + 'static>(config: SettableNodeConfig, value: T) -> Behavior<SettableMsg<T>, (), Error> {
         Behavior::running(move |_, msg:SettableMsg<T>| {
             match msg {
                 SettableMsg::Set(new_value) => {

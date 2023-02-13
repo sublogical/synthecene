@@ -40,14 +40,21 @@
   * ~~ask pattern~~
   * behavior
     * ~~base pattern~~
-    * stopped state
-    * context support
-    * signal support
+    * ~~stopped state~~
+    * ~~context support~~
     * splittable actorref (take a reference only to one message it handles)
   * child pattern
-    * context.spawn
-    * spawn protocol
-    * child signals
+    * ~~context.spawn~~
+    * ~~spawn protocol~~
+    * ~~child signals~~
+    * full lifecycle test
+    * stop child
+    * stop system
+    * stop with failure
+  * signal pattern
+    * ~~signal support~~
+    * started signal
+    * post-stopped signal
   * watch pattern
   * pipe-to-self pattern
   * supervision pattern
