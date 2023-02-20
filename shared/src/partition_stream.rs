@@ -1,9 +1,10 @@
-use std::{collections::HashMap, sync::{Arc, Mutex}, pin::Pin, task::{Poll, Context}, fmt::Debug};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::pin::Pin;
+use std::task::{Poll, Context};
 
 use futures::Stream;
 use pin_project::pin_project;
-
-
 
 #[pin_project]
 struct PartitionStream <P, I, O, F, S> 
@@ -20,15 +21,13 @@ where
 }
 
 
-trait PartitionStreamExt<P, O, F>: Stream
+pub trait PartitionStreamExt<P, O, F>: Stream
 {
     fn partition_by(self, partition: F) -> PartitionStreamRoot<P, Self::Item, O, F, Self>
     where
-        P: Debug + std::cmp::Eq + std::hash::Hash + Clone + Send + Sync + 'static,
+        P: std::cmp::Eq + std::hash::Hash + Clone + Send + Sync,
         F: Fn(Self::Item) -> Vec<(P, O)>,
-        O: Debug,
         Self: Sized + Send + Sync + 'static,
-        Self::Item: Debug
     {
         let source = PartitionStream::new(self, partition);
 
@@ -49,9 +48,7 @@ enum InnerPollResult {
 
 impl <P, I, O, F, S> PartitionStream <P, I, O, F, S> 
 where
-    I: Debug,
-    P: Debug + std::cmp::Eq + std::hash::Hash + Clone + Send + Sync + 'static,
-    O: Debug,
+    P: std::cmp::Eq + std::hash::Hash + Clone,
     F: Fn(I) -> Vec<(P, O)>,
     S: Stream<Item = I>,
 {
@@ -71,34 +68,34 @@ where
         partition: P
     ) -> std::task::Poll<Option<O>> {
         if let Some(output) = self.as_mut().get_buffered_output(&partition) {
-            println!("CHILD({:?}): found output", partition);
+            // found existing buffered output for child
             return std::task::Poll::Ready(Some(output));
         }
 
         {   
             let this = self.as_mut().project();
 
-            println!("CHILD({:?}): setting waker", partition);
+            // setting waker for me
             this.child_waker.insert(partition.clone(), cx.waker().clone());
         }
 
-        println!("CHILD({:?}): try getting more", partition);
+        // no data, so we need to poll the source
         match self.as_mut().get_more(cx) {
             InnerPollResult::Ready => {
                 if let Some(output) = self.as_mut().get_buffered_output(&partition) {
-                    println!("CHILD({:?}): now found output", partition);
+                    // now there is data for us
                     std::task::Poll::Ready(Some(output))
                 } else {
-                    println!("CHILD({:?}): still no output", partition);
+                    // got more data, but still nothing for me
                     std::task::Poll::Pending
                 }
             },
             InnerPollResult::Pending => {
-                println!("CHILD({:?}): appears I should keep waiting", partition);
+                // still no data, but source is pending, let's wait
                 std::task::Poll::Pending
             },
             InnerPollResult::Done => {
-                println!("CHILD({:?}): appears I'm totally done", partition);
+                // we didn't receive anything more data from the root and nothing is pending, we're done
                 std::task::Poll::Ready(None)
             },
         }
@@ -116,28 +113,27 @@ where
             let this = self.as_mut().project();
 
             if this.root_waker.is_none() {
-                println!("ROOT:  no root waker, setting it");
                 *this.root_waker = Some(cx.waker().clone());
             }
         }
-    
-        println!("ROOT: try getting more");
+
+        // Nothing to return, try to get more data
         match self.as_mut().get_more(cx) {
             InnerPollResult::Ready => {
                 if let Some(output) = self.get_next_child() {
-                    println!("ROOT:  have a new child now");
+                    // there is a new child, return it
                     std::task::Poll::Ready(Some(output))
                 } else {
-                    println!("ROOT:  still no new child");
+                    // got more data, but still no new child
                     std::task::Poll::Pending
                 }
             },
             InnerPollResult::Done => {
-                println!("ROOT:  it appears I'm totally done");
+                // we didn't receive anything more data from the root and nothing is pending, we're done
                 std::task::Poll::Ready(None)
             },
             InnerPollResult::Pending => {
-                println!("ROOT:  it appears I should keep waiting");
+                // I'll need to keep waiting, waker should already be set
                 std::task::Poll::Pending
             }
         }
@@ -169,25 +165,28 @@ where
     ) -> InnerPollResult {
         let this = self.project();
 
+        // If we have any buffered output waiting for a child stream to pick it up, don't request more
         if this.child_buffer.values().map(|v| v.len()).sum::<usize>() > 0 {
-            println!("INNER: NOT GETTING MORE - pending child");
             return InnerPollResult::Pending;
         }
 
+        // If we have any new children waiting to be spawned, don't request more
         if this.new_children.len() != 0 {
-            println!("INNER: NOT GETTING MORE - pending new child");
             return InnerPollResult::Pending;
         }
 
         match this.source.poll_next(cx) {
             Poll::Ready(Some(input)) => {
+                // We got some output, call the proc to partition it
                 let output = (this.partition)(input);
 
                 for (partition, item) in output {
                     if let Some(buffer) = this.child_buffer.get_mut(&partition) {
+                        // Adding to an existing buffer, wake the existing child
                         buffer.push(item);
                         this.child_waker.remove(&partition).map(|waker| waker.wake());
                     } else {
+                        // new child wake the root stream
                         this.child_buffer.insert(partition.clone(), vec![item]);
                         this.new_children.push(partition);
                         this.root_waker.take().map(|waker| waker.wake());
@@ -205,10 +204,8 @@ where
 
 }
 
-struct PartitionStreamRoot<P, I, O, F, S> 
+pub struct PartitionStreamRoot<P, I, O, F, S> 
 where
-    P: std::cmp::Eq + std::hash::Hash + Clone + Send + Sync + 'static,
-    F: Fn(I) -> Vec<(P, O)>,
     S: Stream<Item = I>,
 {
     source: Arc<Mutex<PartitionStream<P, I, O, F, S>>>,
@@ -216,9 +213,9 @@ where
 
 impl <P, I, O, F, S>  Stream for PartitionStreamRoot<P, I, O, F, S> 
 where
-    P: Debug + std::cmp::Eq + std::hash::Hash + Clone + Send + Sync + 'static,
-    O: Debug + Send + Sync + Sized + 'static,
-    I: Debug + Send + Sync + 'static,
+    P: std::cmp::Eq + std::hash::Hash + Clone + Send + Sync + 'static,
+    O: Send + Sync + Sized + 'static,
+    I: Send + Sync + 'static,
     F: Fn(I) -> Vec<(P, O)> + Sync + Send + 'static,
     S: Stream<Item = I> + Sync + Send + Unpin + 'static,
 {
@@ -248,10 +245,8 @@ where
 }
 
 
-struct PartitionStreamChild<P, I, O, F, S>
+pub struct PartitionStreamChild<P, I, O, F, S>
 where
-    P: std::cmp::Eq + std::hash::Hash + Clone + Send + Sync + 'static,
-    F: Fn(I) -> Vec<(P, O)>,
     S: Stream<Item = I>,
 {
     source: Arc<Mutex<PartitionStream<P, I, O, F, S>>>,
@@ -260,10 +255,8 @@ where
 
 impl <P, I, O, F, S> Stream for PartitionStreamChild<P, I, O, F, S> 
 where
-    P: Debug + std::cmp::Eq + std::hash::Hash + Clone + Send + Sync + 'static,
-    O: Debug,
+    P: std::cmp::Eq + std::hash::Hash + Clone,
     F: Fn(I) -> Vec<(P, O)>,
-    I: Debug,
     S: Stream<Item = I> + Unpin,
 {
     type Item = O;
@@ -291,9 +284,9 @@ where
 mod test {
     use std::collections::BTreeMap;
 
-    use futures::{stream, Stream};
+    use futures::stream;
     use futures::stream::StreamExt;
-    use super::{PartitionStreamExt, PartitionStreamRoot};
+    use super::PartitionStreamExt;
 
     #[tokio::test]
     async fn basic_stream_partition_test() {
@@ -324,7 +317,7 @@ mod test {
         });
 
         let handles = partitioned_stream.map(|(partition, stream)| async move {
-            let output = stream.map(|(key, data)| data).collect::<Vec<i32>>().await;
+            let output = stream.map(|(_, data)| data).collect::<Vec<i32>>().await;
             (partition.clone(), output)
         }).map(|fut| {
             tokio::spawn(fut)
