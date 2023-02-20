@@ -126,6 +126,7 @@ pub mod applications {
 }
 
 pub mod types;
+pub mod partition_stream;
 
 #[cfg(test)]
 mod tests {
