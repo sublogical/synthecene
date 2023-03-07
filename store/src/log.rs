@@ -1,12 +1,13 @@
 use async_recursion::async_recursion;
 use bytes::Bytes;
+use calico_shared::types::systemtime_to_timestamp;
 use futures::{TryStreamExt, future};
 use log::info;
 use object_store::ObjectStore;
 use object_store::path::Path as ObjectStorePath;
 use prost::Message;
 use rand::Rng;
-use std::ops::Deref;
+use std::{ops::Deref, time::SystemTime};
 use std::sync::Arc;
 
 use crate::protocol;
@@ -71,8 +72,6 @@ impl TableView<'_> {
         result
     }
 }
-
-
 
 #[derive(Clone, Debug)]
 pub struct Commit<'a>{
@@ -150,6 +149,114 @@ impl Commit<'_> {
         todo!("FINISH");
     }
 
+
+    pub fn create_commit(&self) -> PendingCommit {
+        PendingCommit::init(&self.commit_id)
+    }
+
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct PendingCommit {
+    pub parent_id: Vec<u8>,
+    pub commit_id: Vec<u8>,
+    pub application: Option<String>,
+    pub committer: Option<String>,
+    pub commit_message: Option<String>,
+    pub commit_timestamp: Option<u64>,
+    pub columns: Vec<String>,
+    pub column_expressions: Vec<(String, String)>,
+    pub tile_files: Vec<protocol::TileFiles>    
+}
+
+impl PendingCommit {
+    pub fn init(parent_id: &Vec<u8>) -> PendingCommit {
+        PendingCommit {
+            parent_id: parent_id.clone(),
+            commit_id: generate_commit_id().to_vec(),
+            ..std::default::Default::default()
+        }
+    }
+
+    pub fn with_application(mut self, application: &str) -> PendingCommit {
+        self.application = Some(application.to_string());
+        self
+    }
+
+    pub fn with_committer(mut self, committer: &str) -> PendingCommit {
+        self.committer = Some(committer.to_string());
+        self
+    }
+
+    pub fn with_commit_message(mut self, commit_message: &str) -> PendingCommit {
+        self.commit_message = Some(commit_message.to_string());
+        self
+    }
+
+    pub fn with_commit_timestamp(mut self, commit_timestamp: u64) -> PendingCommit {
+        self.commit_timestamp = Some(commit_timestamp);
+        self
+    }
+
+    pub fn with_column(mut self, column: String) -> PendingCommit {
+        self.columns.push(column);
+        self
+    }
+
+    pub fn with_columns(mut self, columns: Vec<String>) -> PendingCommit {
+        self.columns.extend(columns);
+        self
+    }
+
+    pub fn with_column_expression(mut self, column: String, expression: String) -> PendingCommit {
+        self.column_expressions.push((column, expression));
+        self
+    }
+
+    pub fn with_column_expressions(mut self, column_expressions: Vec<(String, String)>) -> PendingCommit {
+        self.column_expressions.extend(column_expressions);
+        self
+    }
+
+    pub fn with_tile_file(mut self, tile_file: protocol::TileFiles) -> PendingCommit {
+        self.tile_files.push(tile_file);
+        self
+    }
+
+    pub fn with_tile_files(mut self, tile_files: Vec<protocol::TileFiles>) -> PendingCommit {
+        self.tile_files.extend(tile_files);
+        self
+    }
+
+    pub async fn commit(self, log: &TransactionLog) -> CalicoResult<protocol::Commit> {
+        let mut commit = protocol::Commit::default();
+
+        commit.parent_id = self.parent_id.to_vec();
+        commit.timestamp = match self.commit_timestamp {
+            Some(ts) => ts,
+            None => systemtime_to_timestamp(SystemTime::now())
+        };
+
+        commit.columns = self.columns;
+        commit.tile_files = self.tile_files;
+
+        let expected_len = commit.encoded_len();
+
+        let mut buf = Vec::with_capacity(18);
+        commit.encode(&mut buf)?;
+        assert_eq!(expected_len, buf.len());
+
+        let path = TransactionLog::commit_path(&commit.commit_id)?;
+        let data = Bytes::from(buf);
+        
+        info!("{}: storing commit record", hex::encode(&commit.commit_id));
+
+        // Note that this does not use the 'put_if_not_exist' because it is 
+        // expected that a [u8; 20] rand is always unique.
+        log.object_store.put(&path, data).await?;
+
+        Ok(commit)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -337,8 +444,10 @@ impl TransactionLog {
     // this will not advance the head reference, so this commit must be 
     // separately merged into a branch
 
+    // todo: deprecate this, use PendingCommit instead
     pub async fn create_commit(&self, 
                          parent_id: &Vec<u8>,
+                         commit_id: Option<[u8; 20]>,
                          _application: Option<String>,
                          _committer: Option<String>,
                          _commit_message: Option<String>,
@@ -350,7 +459,10 @@ impl TransactionLog {
         let mut commit = protocol::Commit::default();
 
         // todo: any way to avoid vec<u8> for this since we have fixed size?
-        commit.commit_id = rand::thread_rng().gen::<[u8; 20]>().to_vec();
+        commit.commit_id = match commit_id {
+            Some(prior_commit_id) => prior_commit_id,
+            None => generate_commit_id()
+        }.to_vec();
     
         commit.parent_id = parent_id.to_vec();
         commit.timestamp = commit_timestamp;
@@ -569,6 +681,13 @@ impl TransactionLog {
     }
 }
 
+/**
+ * Generates a random commit id
+ */
+fn generate_commit_id() -> [u8; 20] {
+    rand::thread_rng().gen::<[u8; 20]>()
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -599,7 +718,9 @@ mod tests {
     fn test_file(timestamp: u64, partition_num: u64, column_group: &str, filename: &str) -> protocol::TileFiles {
         protocol::TileFiles {
             tile: Some(protocol::Tile {
-                partition_num,
+                partition_key: vec![protocol::PartitionValue {
+                    value: Some(protocol::partition_value::Value::Int64Value(partition_num as i64)),
+                }],
                 column_group: column_group.to_string(),
             }),
             file: vec![protocol::File {
@@ -618,6 +739,7 @@ mod tests {
 
         let commit = log.create_commit(
             &head_id.to_vec(), 
+            None,
             None, 
             None, 
             None, 

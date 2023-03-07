@@ -23,11 +23,11 @@ pub trait Operation<T> {
     // 3. commit - performs the transaction log update
     // 4. abort - cleans up any partitially committed updates
 
-    async fn execute(&mut self, table_store: Arc<TableStore>) -> CalicoResult<T>;
+    async fn execute(mut self, table_store: Arc<TableStore>) -> CalicoResult<T>;
 
     /// Attempt to cleanup any remnants of a failed operation
     ///
-    async fn abort(&mut self, table_store: Arc<TableStore>) -> CalicoResult<()>;
+    async fn abort(mut self, table_store: Arc<TableStore>) -> CalicoResult<()>;
 
     /// Return a snapshot of the set of [`Metric`]s for this
     /// [`ExecutionPlan`].

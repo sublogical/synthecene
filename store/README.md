@@ -105,7 +105,10 @@ UPDATE
   * ~~Support direct reader for Rust~~
 * Cleanup
   * Move multizip out to a utility class
+* Polars
+  * Implement Polar Reader
 * DataFusion
+  * Reorganize datafusion code away from core table / store code
   * Add BinaryType to TryFrom<&DataType> for ScalarValue
   * Add BinaryType to MergeSortJoin (line 1112)
   * Implement statistics() for SortMergeJoinExec

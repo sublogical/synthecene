@@ -24,6 +24,7 @@ path = "src/kafka_connector.rs"
 [dependencies]
 calico-shared = { path = "../shared" }
 
+async-stream = "0.3"
 itertools = "0.7.4"
 arrow = "24.0"
 async-trait = "0.1"

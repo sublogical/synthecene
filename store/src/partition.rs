@@ -3,20 +3,69 @@ use arrow::compute::take;
 use arrow::datatypes::{Schema, DataType };
 use arrow::record_batch::RecordBatch;
 use arrow::error::Result as ArrowResult;
-use datafusion::physical_plan::SendableRecordBatchStream;
+use calico_shared::partition_stream::PartitionStreamExt;
+use datafusion::datasource::listing::PartitionedFileStream;
+use datafusion::physical_plan::memory::MemoryStream;
+use datafusion::scalar::ScalarValue;
+use futures::Stream;
 use log::info;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hash;
 use std::hash::Hasher;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use calico_shared::result::{CalicoResult, CalicoError};
-use crate::protocol;
+use crate::protocol::{self, column_group_metadata};
 use crate::table::TableStore;
 
+#[derive(Debug)]
+pub enum Error {
+    ColumnEncoding(arrow::error::ArrowError),
+    ComputePartition(String),
+    RecordBatchEncoding(arrow::error::ArrowError),
+    RecordBatchDecoding(arrow::error::ArrowError),
+    ColumnGroupExtraction(CalicoError),
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
+/// A tile is a column family and a partition key (vector of ScalarValues)
+pub type Tile = (String, Vec<ScalarValue>);
+
+impl From <protocol::Tile> for Tile {
+    fn from(tile: protocol::Tile) -> Self {
+        let partition_key = tile.partition_key.into_iter().map(|v| v.into()).collect();
+
+        (tile.column_group, partition_key)
+    }
+}
+
+impl From<protocol::PartitionValue> for ScalarValue {
+    fn from(partition_value: protocol::PartitionValue) -> Self {
+        match partition_value.value {            
+            Some(protocol::partition_value::Value::Int64Value(v)) => ScalarValue::Int64(Some(v)),
+            Some(protocol::partition_value::Value::Uint64Value(v)) => ScalarValue::UInt64(Some(v)),
+            Some(protocol::partition_value::Value::DoubleValue(v)) => ScalarValue::Float64(Some(v)),
+            Some(protocol::partition_value::Value::StringValue(v)) => ScalarValue::Utf8(Some(v)),
+            Some(protocol::partition_value::Value::BoolValue(v)) => ScalarValue::Boolean(Some(v)),
+            None => ScalarValue::Null,
+        }
+    }
+}
+
+
+
+pub type SendableRecordBatchStream = Pin<Box<dyn Stream<Item = ArrowResult<RecordBatch>> + Sync + Send>>;
+
+/// A stream of SendableRecordBatchStreams partitioned by column family and partition key (vector of ScalarValues)
+pub type TiledRecordBatchStream = Box<dyn Stream<Item = Result<(Tile, Box<dyn Stream<Item = RecordBatch> + Send + Sync + Unpin>)>> + Send + Sync + Unpin>;
+
+
+
 // Maps the ID column from a record batch into an columns of partition indices for all records
-fn calc_partitions(column_group_config: &protocol::ColumnGroupMetadata, batch: &RecordBatch) -> CalicoResult<Int32Array> {
+fn calc_partitions(column_group_config: &protocol::ColumnGroupMetadata, batch: &RecordBatch) -> Int32Array {
 
     use protocol::column_group_metadata::PartitionSpec;
 
@@ -27,7 +76,7 @@ fn calc_partitions(column_group_config: &protocol::ColumnGroupMetadata, batch: &
 
 }
 
-fn calc_hash_partitions(key_hash: &protocol::KeyHashPartition, batch: &RecordBatch) -> CalicoResult<Int32Array> {
+fn calc_hash_partitions(key_hash: &protocol::KeyHashPartition, batch: &RecordBatch) -> Int32Array {
 
     // This allows us to create an iterator over a dynamic Hash type
     // (e.g. string, i32), which isn't possible with the default Hash trait
@@ -117,16 +166,23 @@ fn calc_hash_partitions(key_hash: &protocol::KeyHashPartition, batch: &RecordBat
         part
     }).collect();
 
-    Ok(partitions)
+    partitions
 }
 
 // Maps the ID column from a record batch into a vector containing a vector of indices for each partition
-fn partition_indices(column_group_config: &protocol::ColumnGroupMetadata, batch: &RecordBatch) -> CalicoResult<Vec<(u64,UInt64Array)>> {
-    let partitions = calc_partitions(column_group_config, batch)?;
-    let max_partition:i32 = arrow::compute::max(&partitions).ok_or(CalicoError::PartitionError("unexpected error computing max partition"))?;
+fn partition_indices(
+    column_group_config: &protocol::ColumnGroupMetadata, 
+    batch: &RecordBatch
+) -> Result<Vec<(Vec<protocol::PartitionValue>,UInt64Array)>> 
+{
+    // todo: support calculating multiple partition values
+    let partitions = calc_partitions(column_group_config, batch);
+    let max_partition:i32 = arrow::compute::max(&partitions)
+        .ok_or(Error::ComputePartition("unexpected error computing max partition".to_string()))?;
     let partitions = partitions.values();
     
     let mut output:Vec<(u64, Vec<u64>)> = Vec::with_capacity((max_partition + 1) as usize);
+
     for partition_num in 0..=max_partition {
         output.push((partition_num.try_into().unwrap(), Vec::new()));
     }
@@ -136,66 +192,147 @@ fn partition_indices(column_group_config: &protocol::ColumnGroupMetadata, batch:
     }
 
     Ok(output.iter()
-        .map(|(partition_num, indices_vec)| (*partition_num, UInt64Array::from(indices_vec.clone())))
+        .map(|(partition_num, indices_vec)| {
+            let partition_key = vec![protocol::PartitionValue{ 
+                value: Some(protocol::partition_value::Value::Uint64Value(*partition_num))
+             }];
+            (partition_key, UInt64Array::from(indices_vec.clone()))
+        })
         .collect())
 }
 
-pub async fn split_batch(table_store: &TableStore, batch: &RecordBatch) -> CalicoResult<Vec<(protocol::Tile, Arc<RecordBatch>)>> {
-    let column_groups = table_store.extract_column_groups(batch.schema()).await?;
-
+fn split_recordbatch(
+    batch: &RecordBatch, 
+    column_group_config: &HashMap<String, (Vec<usize>, protocol::ColumnGroupMetadata, Arc<arrow::datatypes::Schema>)>
+) -> Result<Vec<(protocol::Tile, RecordBatch)>>
+{
     let mut output = Vec::new();
 
-    for (column_group, column_indices) in column_groups.iter() {
-        info!("column group: {} has indices {:?}", column_group, column_indices);
-        let config = table_store.column_group_meta(column_group).await?;
-        let partition_indices = partition_indices(&config, batch)?;
+    for (column_group, (column_group_indices, column_group_metadata, column_group_schema)) in column_group_config.iter() {
+        let partition_indices = partition_indices(column_group_metadata, batch)?;
 
-        let column_group_schema = Arc::new(Schema::new(
-            batch.schema().fields()
-                .iter()
-                .enumerate()
-                .filter(|(field_index, _)| column_indices.contains(field_index))
-                .map(|(_, field)| field.to_owned())
-                .collect()));
-            
-        for (partition_num, row_indices) in partition_indices.iter() {
-            let cell_batch = Arc::new(RecordBatch::try_new(
+        for (partition_key, row_indices) in partition_indices.iter() {
+            let cell_batch = RecordBatch::try_new(
                 column_group_schema.clone(),
                 batch
                     .columns()
                     .iter()
                     .enumerate()
-                    .filter(|(column_index, _)| column_indices.contains(column_index))
+                    .filter(|(column_index, _)| column_group_indices.contains(column_index))
                     .map(|(_, column)| take(column.as_ref(), row_indices, None))
-                    .collect::<ArrowResult<Vec<ArrayRef>>>()?
-            )?);
+                    .collect::<ArrowResult<Vec<ArrayRef>>>()
+                    .map_err(Error::ColumnEncoding)?
+            ).map_err(Error::RecordBatchEncoding)?;
 
             let tile = protocol::Tile {
                 column_group: column_group.to_string(),
-                partition_num: *partition_num
+                partition_key: partition_key.clone(),
             };
 
             output.push((tile, cell_batch));
         }
-    }
+
+        info!("column group: {} has indices {:?}", column_group, column_group_indices);
+    };
 
     Ok(output)
 }
- 
-fn _split_stream(_table_store: &TableStore, 
-                _stream: SendableRecordBatchStream) -> 
-                CalicoResult<HashMap<protocol::Tile, SendableRecordBatchStream>> {
-    todo!("perform same partitioning algorithm but on streams");
+
+pub fn stream_from_batches(batches: &Vec<RecordBatch>) -> SendableRecordBatchStream {
+    let schema = batches[0].schema();
+
+    MemoryStream::try_new(
+        batches.clone(),
+        schema.clone(),
+        None
+    ).map(Box::pin)
+    .unwrap()
 }
 
+pub fn stream_from_tiled_batches(tiled_batches:&Vec<(protocol::Tile, Vec<RecordBatch>)>) -> TiledRecordBatchStream {
+    todo!("support converting from tiled batches to a stream of streams")
+}
+
+pub async fn partition_batch_stream(
+    table_store: Arc<TableStore>, 
+    schema: Arc<Schema>,
+    stream: SendableRecordBatchStream
+) -> Result<TiledRecordBatchStream>
+{
+    let column_groups = table_store.extract_column_groups(schema.clone()).await
+        .map_err(Error::ColumnGroupExtraction)?;
+    let mut cf_config = HashMap::with_capacity(column_groups.len());
+
+    for (column_group, column_indices) in column_groups.iter() {
+        info!("column group: {} has indices {:?}", column_group, column_indices);
+        let config = table_store.column_group_meta(column_group).await
+            .map_err(Error::ColumnGroupExtraction)?;
+
+        let column_group_schema = Arc::new(Schema::new(
+            schema.fields()
+            .iter()
+            .enumerate()
+            .filter(|(field_index, _)| column_indices.contains(field_index))
+            .map(|(_, field)| field.to_owned())
+            .collect()));
+
+        cf_config.insert(column_group.to_string(), (column_indices.clone(), config.clone(), column_group_schema.clone()));
+    }
+
+    let tiled_stream = stream.partition_by(move |batch:ArrowResult<RecordBatch>| {
+        let all_split_batches:Result<Vec<(Tile, RecordBatch)>> = batch
+            .map_err(Error::RecordBatchDecoding)
+            .and_then(|batch| 
+                split_recordbatch(&batch, &cf_config)
+                    .map(|split_batches| {
+                        let split_batches:Vec<(Tile, RecordBatch)> = split_batches
+                            .into_iter()
+                            .map(|(tile, batch)| (tile.into(), batch))
+                            .collect();
+
+                        split_batches
+                    })
+                );
+
+        all_split_batches
+    });
+
+    let tiled_stream:TiledRecordBatchStream = Box::new(tiled_stream);
+ 
+    Ok(tiled_stream)
+}
 
 #[cfg(test)]
 mod tests {
     use datafusion::assert_batches_sorted_eq;
     use tempfile::tempdir;
-    
+    use std::collections::BTreeMap;
+
+    use futures::stream;
+    use futures::stream::StreamExt;
+
     use crate::partition::*;
     use crate::test_util::*;
+
+    async fn resolve_splits(partitioned_stream: TiledRecordBatchStream) -> Vec<((String, Vec<ScalarValue>), Vec<RecordBatch>)>{
+        let handles = partitioned_stream.map(|result| async move {
+            match result {
+                Ok((partition, stream)) => {
+                    let output = stream.collect::<Vec<RecordBatch>>().await;
+                    (partition, output)
+                }
+                Err(e) => panic!("Error: {:?}", e),
+            }
+        }).map(|fut| {
+            tokio::spawn(fut)
+        }).collect::<Vec<_>>().await;
+
+        let mut results = Vec::with_capacity(handles.len());
+        for handle in handles {
+            results.push(handle.await.unwrap());
+        }
+        results
+    }
 
     #[tokio::test]
     async fn test_split_batch() {
@@ -214,12 +351,15 @@ mod tests {
                 (FIELD_D, i32_col(&vec![41, 42, 43, 44, 45, 46, 47, 48, 49])),
             ]
         );
-
-        let splits = split_batch(&table_store, &batch).await.unwrap();
+        let schema = batch.schema();
+        let batch_stream = stream_from_batches(&vec![batch]);
+        let partitioned_streams = partition_batch_stream(table_store.clone(), schema, batch_stream).await.unwrap();
+        let mut splits = resolve_splits(partitioned_streams).await;
+        splits.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
         assert_eq!(splits.len(), 3);
-        assert_eq!(splits[0].0.partition_num, 0);
-        assert_eq!(splits[0].0.column_group, COLGROUP_1);
+        assert_eq!(splits[0].0.1[0], ScalarValue::UInt64(Some(0)));
+        assert_eq!(splits[0].0.0, COLGROUP_1);
 
         let expected_0 = vec![
             "+----+----+----+",
@@ -232,10 +372,10 @@ mod tests {
             "| 7  | 18 | 28 |",
             "+----+----+----+",
         ];
-        assert_batches_sorted_eq!(expected_0, &[(*splits[0].1).clone()]);
+        assert_batches_sorted_eq!(expected_0, &[(splits[0].1[0]).clone()]);
 
-        assert_eq!(splits[1].0.partition_num, 1);
-        assert_eq!(splits[1].0.column_group, COLGROUP_1);
+        assert_eq!(splits[1].0.1[0], ScalarValue::UInt64(Some(1)));
+        assert_eq!(splits[1].0.0, COLGROUP_1);
 
         let expected_1 = vec![
             "+----+----+----+",
@@ -247,10 +387,10 @@ mod tests {
             "| 8  | 19 | 29 |",
             "+----+----+----+",
         ];
-        assert_batches_sorted_eq!(expected_1, &[(*splits[1].1).clone()]);
+        assert_batches_sorted_eq!(expected_1, &[(splits[1].1[0]).clone()]);
 
-        assert_eq!(splits[2].0.partition_num, 0);
-        assert_eq!(splits[2].0.column_group, COLGROUP_2);
+        assert_eq!(splits[2].0.1[0], ScalarValue::UInt64(Some(0)));
+        assert_eq!(splits[2].0.0, COLGROUP_2);
 
         let expected_2 = vec![
             "+----+----+----+",
@@ -267,7 +407,7 @@ mod tests {
             "| 8  | 39 | 49 |",
             "+----+----+----+",
         ];
-        assert_batches_sorted_eq!(expected_2, &[(*splits[2].1).clone()]);
+        assert_batches_sorted_eq!(expected_2, &[(splits[2].1[0]).clone()]);
     }
 
     #[tokio::test]
@@ -312,23 +452,27 @@ mod tests {
         ];
 
         for batch in batches {
-            let splits = split_batch(&table_store, &batch).await.unwrap();
+            let schema = batch.schema();
+            let batch_stream = stream_from_batches(&vec![batch]);
+            let partitioned_streams = partition_batch_stream(table_store.clone(), schema, batch_stream).await.unwrap();
+            let mut splits = resolve_splits(partitioned_streams).await;
+            splits.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
             assert_eq!(splits.len(), 2);
-            assert_eq!(splits[0].0.partition_num, 0);
-            assert_eq!(splits[0].0.column_group, COLGROUP_1);
-            assert_eq!(splits[1].0.partition_num, 1);
-            assert_eq!(splits[1].0.column_group, COLGROUP_1);
+            assert_eq!(splits[0].0.1[0], ScalarValue::UInt64(Some(0)));
+            assert_eq!(splits[0].0.0, COLGROUP_1);
+            assert_eq!(splits[1].0.1[0], ScalarValue::UInt64(Some(1)));
+            assert_eq!(splits[1].0.0, COLGROUP_1);
+    
+            assert_eq!(splits[0].1[0].num_columns(), 3);
+            assert_eq!(splits[1].1[0].num_columns(), 3);
 
-            assert_eq!(splits[0].1.num_columns(), 3);
-            assert_eq!(splits[1].1.num_columns(), 3);
-
-            assert!(splits[0].1.num_rows() > 0);
-            assert!(splits[1].1.num_rows() > 0);
+            assert!(splits[0].1[0].num_rows() > 0);
+            assert!(splits[1].1[0].num_rows() > 0);
 
             let merged_splits = vec![
-                (*splits[0].1).clone(),
-                (*splits[1].1).clone()
+                (splits[0].1[0]).clone(),
+                (splits[1].1[0]).clone()
             ];
 
             let expected = vec![
@@ -365,11 +509,15 @@ mod tests {
                 (FIELD_B, i32_col(&vec![21, 22, 23, 24, 25, 26, 27, 28, 29])),
             ]);
 
-        let splits = split_batch(&table_store, &batch).await.unwrap();
+        let schema = batch.schema();
+        let batch_stream = stream_from_batches(&vec![batch]);
+        let partitioned_streams = partition_batch_stream(table_store.clone(), schema, batch_stream).await.unwrap();
+        let mut splits = resolve_splits(partitioned_streams).await;
+        splits.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
         assert_eq!(splits.len(), 2);
-        assert_eq!(splits[0].0.partition_num, 0);
-        assert_eq!(splits[0].0.column_group, COLGROUP_1);
+        assert_eq!(splits[0].0.1[0], ScalarValue::UInt64(Some(0)));
+        assert_eq!(splits[0].0.0, COLGROUP_1);
 
         let expected_0 = vec![
             "+----+----+----+",
@@ -382,10 +530,10 @@ mod tests {
             "| i  | 19 | 29 |",
             "+----+----+----+",
         ];
-        assert_batches_sorted_eq!(expected_0, &[(*splits[0].1).clone()]);    
+        assert_batches_sorted_eq!(expected_0, &[(splits[0].1[0]).clone()]);    
 
-        assert_eq!(splits[1].0.partition_num, 1);
-        assert_eq!(splits[1].0.column_group, COLGROUP_1);
+        assert_eq!(splits[1].0.1[0], ScalarValue::UInt64(Some(1)));
+        assert_eq!(splits[1].0.0, COLGROUP_1);
 
         let expected_1 = vec![
             "+----+----+----+",
@@ -397,7 +545,7 @@ mod tests {
             "| h  | 18 | 28 |",
             "+----+----+----+",
         ];
-        assert_batches_sorted_eq!(expected_1, &[(*splits[1].1).clone()]);    
+        assert_batches_sorted_eq!(expected_1, &[(splits[1].1[0]).clone()]);    
 
     }
 

@@ -64,8 +64,18 @@ message Checkpoint {
     File metadata_objects = 4;
 }
 
+message PartitionValue {
+    oneof value {
+        string string_value = 1;
+        uint64 uint64_value = 2;
+        int64 int64_value = 3;
+        double double_value = 4;
+        bool bool_value = 5;
+    }
+}
+
 message Tile {
-    uint64 partition_num = 1;
+    repeated PartitionValue partition_key = 1;
     string column_group = 2;
 }
 

@@ -12,9 +12,10 @@ use object_store::local::LocalFileSystem;
 use object_store::path::Path as ObjectStorePath;
 use pretty_bytes::converter::convert;
 use storelib::log::ReferencePoint;
-use storelib::table::{Table, OBJECT_PATH, TableStore};
+use storelib::datafusion::table::DataFusionTable;
+use storelib::table::{OBJECT_PATH, TableStore};
 use storelib::{test_util::*, protocol};
-use storelib::operation::append::append_operation;
+use storelib::datafusion::operation::append::append_operation;
 use tempfile::{tempdir};
 use tokio::time::Instant;
 use url::Url;
@@ -61,7 +62,7 @@ async fn perform_query(table_store: Arc<TableStore>,
     let table_schema = make_schema(&columns);
     let sql = format!("SELECT * FROM test LIMIT 10");
     
-    let table = Table::define(table_store, table_schema, reference).unwrap();    
+    let table = DataFusionTable::define(table_store, table_schema, reference).unwrap();    
     ctx.register_table("test", table).unwrap();
 
     let df = ctx.sql(sql.as_str()).await.unwrap();

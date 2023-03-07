@@ -16,10 +16,9 @@ mod writer;
 pub mod blob;
 pub mod datatypes;
 pub mod log;
-pub mod operation;
 pub mod partition;
+pub mod datafusion;
 pub mod table;
-// pub mod reader;
 
 pub mod test_util {
     use std::sync::Arc;
@@ -46,7 +45,7 @@ pub mod test_util {
     pub const COLGROUP_2:&str = "cg2";
     pub const COLGROUP_UNPARTITIONED:&str = COLGROUP_2;
 
-    pub fn provision_ctx(path: &std::path::Path) -> SessionContext {
+    pub(crate) fn provision_ctx(path: &std::path::Path) -> SessionContext {
         let ctx = SessionContext::new();
         let object_store:Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(path).unwrap());
 
@@ -57,7 +56,7 @@ pub mod test_util {
         ctx
     }
 
-    pub async fn provision_store(ctx: &SessionContext, column_groups: &Vec<&str>) -> TableStore {
+    pub(crate) async fn provision_store(ctx: &SessionContext, column_groups: &Vec<&str>) -> TableStore {
         let object_store_url = ObjectStoreUrl::parse("file://temp").unwrap();
         let object_store = ctx.state.read().runtime_env.object_store(&object_store_url).unwrap();
         let mut table_store:TableStore = TableStore::new(object_store_url, object_store).await.unwrap();
