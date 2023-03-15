@@ -1,6 +1,6 @@
 use arrow::array::*;
 use arrow::compute::take;
-use arrow::datatypes::{Schema, DataType };
+use arrow::datatypes::{Schema, DataType, SchemaRef };
 use arrow::record_batch::RecordBatch;
 use arrow::error::Result as ArrowResult;
 use calico_shared::partition_stream::PartitionStreamExt;
@@ -27,6 +27,7 @@ pub enum Error {
     RecordBatchEncoding(arrow::error::ArrowError),
     RecordBatchDecoding(arrow::error::ArrowError),
     ColumnGroupExtraction(CalicoError),
+    UnknownColumnGroup(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -57,10 +58,10 @@ impl From<protocol::PartitionValue> for ScalarValue {
 
 
 
-pub type SendableRecordBatchStream = Pin<Box<dyn Stream<Item = ArrowResult<RecordBatch>> + Sync + Send>>;
+pub type SendableRecordBatchStream = Pin<Box<dyn Stream<Item = RecordBatch> + Sync + Send + Unpin>>;
 
 /// A stream of SendableRecordBatchStreams partitioned by column family and partition key (vector of ScalarValues)
-pub type TiledRecordBatchStream = Box<dyn Stream<Item = Result<(Tile, Box<dyn Stream<Item = RecordBatch> + Send + Sync + Unpin>)>> + Send + Sync + Unpin>;
+pub type TiledRecordBatchStream = Box<dyn Stream<Item = Result<(Tile, SchemaRef, SendableRecordBatchStream)>> + Send + Sync + Unpin>;
 
 
 
@@ -239,19 +240,15 @@ fn split_recordbatch(
 }
 
 pub fn stream_from_batches(batches: &Vec<RecordBatch>) -> SendableRecordBatchStream {
-    let schema = batches[0].schema();
-
-    MemoryStream::try_new(
-        batches.clone(),
-        schema.clone(),
-        None
-    ).map(Box::pin)
-    .unwrap()
+    Box::pin(stream::iter(batches.clone()))
 }
 
 pub fn stream_from_tiled_batches(tiled_batches:&Vec<(protocol::Tile, Vec<RecordBatch>)>) -> TiledRecordBatchStream {
     todo!("support converting from tiled batches to a stream of streams")
 }
+
+use futures::stream;
+use futures::stream::StreamExt;
 
 pub async fn partition_batch_stream(
     table_store: Arc<TableStore>, 
@@ -268,6 +265,7 @@ pub async fn partition_batch_stream(
         let config = table_store.column_group_meta(column_group).await
             .map_err(Error::ColumnGroupExtraction)?;
 
+        // create a schema for the column group by filtering the schema to only include the columns in the column group
         let column_group_schema = Arc::new(Schema::new(
             schema.fields()
             .iter()
@@ -279,11 +277,12 @@ pub async fn partition_batch_stream(
         cf_config.insert(column_group.to_string(), (column_indices.clone(), config.clone(), column_group_schema.clone()));
     }
 
-    let tiled_stream = stream.partition_by(move |batch:ArrowResult<RecordBatch>| {
-        let all_split_batches:Result<Vec<(Tile, RecordBatch)>> = batch
-            .map_err(Error::RecordBatchDecoding)
-            .and_then(|batch| 
-                split_recordbatch(&batch, &cf_config)
+    // create a copy of the config so that it can be moved into the partition_by closure    
+    let cf_config_part = cf_config.clone();
+
+    let tiled_stream = stream.partition_by(move |batch:RecordBatch| {
+        let all_split_batches:Result<Vec<(Tile, RecordBatch)>> = 
+                split_recordbatch(&batch, &cf_config_part)
                     .map(|split_batches| {
                         let split_batches:Vec<(Tile, RecordBatch)> = split_batches
                             .into_iter()
@@ -291,13 +290,26 @@ pub async fn partition_batch_stream(
                             .collect();
 
                         split_batches
-                    })
-                );
-
+                    });
         all_split_batches
     });
 
-    let tiled_stream:TiledRecordBatchStream = Box::new(tiled_stream);
+    // Now augment the stream of streams with schemas for the tile
+    let tiled_stream_with_schemas = tiled_stream.map(move |result|
+        match result {
+            Ok((tile, stream)) => 
+                cf_config.get(&tile.0)
+                    .ok_or(Error::UnknownColumnGroup(tile.0.clone()))
+                    .map(|(_, _, schema)| {
+                        let schema = schema.clone();
+                        let tile = tile.clone();
+                        (tile, schema, stream)
+                    })
+,
+            Err(e) => Err(e)
+        });
+
+    let tiled_stream:TiledRecordBatchStream = Box::new(tiled_stream_with_schemas);
  
     Ok(tiled_stream)
 }
@@ -317,7 +329,7 @@ mod tests {
     async fn resolve_splits(partitioned_stream: TiledRecordBatchStream) -> Vec<((String, Vec<ScalarValue>), Vec<RecordBatch>)>{
         let handles = partitioned_stream.map(|result| async move {
             match result {
-                Ok((partition, stream)) => {
+                Ok((partition, schema, stream)) => {
                     let output = stream.collect::<Vec<RecordBatch>>().await;
                     (partition, output)
                 }

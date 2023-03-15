@@ -306,7 +306,6 @@ mod tests {
     use crate::log::ReferencePoint;
     use crate::datafusion::operation::append::{append_operation, append_operation_at};
     use crate::datafusion::table::DataFusionTable;
-    use crate::table::Table;
     use crate::test_util::*;
 
     use super::TableStore;

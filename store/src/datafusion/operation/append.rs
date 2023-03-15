@@ -1,18 +1,16 @@
 use std::fmt;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::time::SystemTime;
 
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use futures::Stream;
+use futures::Future;
+use futures::stream::StreamExt;
 use object_store::ObjectStore;
 use uuid::Uuid;
 
-use crate::datatypes::systemtime_to_timestamp;
-use crate::log::{MAIN, PendingCommit};
-use crate::partition::{TiledRecordBatchStream, stream_from_batches, stream_from_tiled_batches, partition_batch_stream, SendableRecordBatchStream};
+use crate::log::PendingCommit;
+use crate::partition::{TiledRecordBatchStream, stream_from_batches, stream_from_tiled_batches, partition_batch_stream, SendableRecordBatchStream, Tile};
 use crate::table::TableStore;
 use crate::protocol;
 use crate::writer::{stream_batches_to_bytes, stream_bytes_to_objects};
@@ -42,7 +40,7 @@ impl fmt::Debug for BatchData {
             BatchData::Stream(_,_) => write!(f, "Stream"),
             BatchData::List(v) => write!(f, "List({:?})", v.len()),
             BatchData::Direct(v) => write!(f, "Direct({:?})", v.len()),
-            BatchData::TiledStream(v) => write!(f, "TiledStream"),
+            BatchData::TiledStream(_) => write!(f, "TiledStream"),
             BatchData::TiledBatches(v) => write!(f, "TiledBatches({:?})", v.len()),
         }
     }
@@ -56,7 +54,8 @@ impl Default for BatchData {
 
 impl AppendOperation {
     pub fn init(parent_id: &Vec<u8>) -> AppendOperation {
-        let mut pending_commit = PendingCommit::init(parent_id);
+        let pending_commit = PendingCommit::init(parent_id);
+
         Self {
             pending_commit,
             batch_data: BatchData::None,
@@ -119,30 +118,18 @@ impl AppendOperation {
     }
 }
 
-async fn fuckyou(batch_data: &BatchData, parent_id: Vec<u8>, table_store: Arc<TableStore>) -> CalicoResult<protocol::Commit> {
-    let log = table_store.default_transaction_log().await?;    
-
-    if let BatchData::Direct(v) = batch_data {
-        let mut all_tile_files = vec![];
-        for tile_files in v {
-            all_tile_files.push(tile_files.clone());
-        }
-        let pending_commit = PendingCommit::init(&parent_id)
-            .with_tile_files(all_tile_files);
-
-        let commit = pending_commit
-            .commit(&log).await?;
-        return Ok(commit);
-    }else {
-        panic!("fuk")
-    }
-    
-}
 #[async_trait]
 impl Operation<protocol::Commit> for AppendOperation {
     async fn execute(mut self, table_store: Arc<TableStore>) -> CalicoResult<protocol::Commit> {
-        // TODO: handle distinct transaction logs
+        // TODO: move these
+        let max_partfile_size = 1_000_000;
+        let job_uuid = Uuid::new_v4();
+        let start_partnum = 0;
+        
         let log = table_store.default_transaction_log().await?;    
+        let object_store = table_store.default_object_store().await?;
+        let store_path = "/".to_string();
+        let commit_id = self.pending_commit.commit_id.clone();
 
         let all_tile_files:Vec<protocol::TileFiles> = match self.batch_data {
             BatchData::None => panic!("Should always have a stream or a list of tilefiles to commit"),
@@ -151,18 +138,49 @@ impl Operation<protocol::Commit> for AppendOperation {
                 let schema = v[0].schema();
                 let tiled_stream = partition_batch_stream(table_store.clone(), schema, stream).await
                     .expect("failed to partition batch stream");
-                stream_to_tile_files(tiled_stream).await
+
+                tiled_stream_to_tile_files(
+                    max_partfile_size,
+                    object_store.clone(), 
+                    store_path,
+                    commit_id, 
+                    job_uuid, 
+                    start_partnum, 
+                    tiled_stream).await
             },
             BatchData::Direct(files) => files.clone(),
             BatchData::Stream(schema, stream) => {
                 let tiled_stream = partition_batch_stream(table_store.clone(), schema, stream).await
                     .expect("failed to partition batch stream");
-                stream_to_tile_files(tiled_stream).await
+
+                tiled_stream_to_tile_files(
+                    max_partfile_size,
+                    object_store.clone(), 
+                    store_path,
+                    commit_id, 
+                    job_uuid, 
+                    start_partnum, 
+                    tiled_stream).await
             },
-            BatchData::TiledStream(tiled_stream) => stream_to_tile_files(tiled_stream).await,
+            BatchData::TiledStream(tiled_stream) => 
+                tiled_stream_to_tile_files(
+                    max_partfile_size,
+                    object_store.clone(), 
+                    store_path,
+                    commit_id, 
+                    job_uuid, 
+                    start_partnum, 
+                    tiled_stream).await,
             BatchData::TiledBatches(v) => {
                 let tiled_stream = stream_from_tiled_batches(&v);
-                stream_to_tile_files(tiled_stream).await
+                tiled_stream_to_tile_files(
+                    max_partfile_size,
+                    object_store.clone(), 
+                    store_path,
+                    commit_id, 
+                    job_uuid, 
+                    start_partnum, 
+                    tiled_stream).await
             }
         };
 
@@ -181,46 +199,73 @@ impl Operation<protocol::Commit> for AppendOperation {
     }
 }
 
-use futures::stream;
-use futures::stream::StreamExt;
-
-
-async fn stream_to_tile_files<'a>(
+fn stream_to_tile_files<'a, 'b: 'a>(
     max_partfile_size: usize,
     object_store: Arc<dyn ObjectStore>,
-    store_path: &'a str,
-    commit_id: &'a Vec<u8>,
-    job_uuid: &'a Uuid,
+    store_path: String,
+    commit_id: Vec<u8>,
+    job_uuid: Uuid,
+    start_partnum: usize,
+    tile: Tile,
+    schema: SchemaRef,
+    stream: SendableRecordBatchStream
+) -> impl Future<Output = Vec<protocol::TileFiles>> + 'b
+{
+    async move {
+        let mut byte_stream = stream_batches_to_bytes(
+            max_partfile_size,
+            schema, 
+            stream);
+
+        let file_stream = stream_bytes_to_objects(
+            &tile, 
+            object_store.clone(),
+            &store_path,
+            &commit_id,
+            &job_uuid,
+            start_partnum, 
+            &mut byte_stream);
+
+        file_stream.collect::<Vec<protocol::TileFiles>>().await
+    }
+}
+
+async fn tiled_stream_to_tile_files (
+    max_partfile_size: usize,
+    object_store: Arc<dyn ObjectStore>,
+    store_path: String,
+    commit_id: Vec<u8>,
+    job_uuid: Uuid,
     start_partnum: usize,
     tiled_stream: TiledRecordBatchStream
 ) -> Vec<protocol::TileFiles> 
-{
-    let handles = tiled_stream.map(|result| async move {
-        match result {
-            Ok((tile, batch_stream)) => {
-                let mut batch_stream = Pin::new(batch_stream);
-                let byte_stream = stream_batches_to_bytes(schema, &mut batch_stream, max_partfile_size);
-                let file_stream = stream_bytes_to_objects(&tile, object_store, store_path, commit_id, job_uuid, start_partnum, &byte_stream);
+{    
+    let results = tiled_stream.then(|result| {
+        let store_path = store_path.clone();
+        let object_store = object_store.clone();
+        let commit_id = commit_id.clone();
+        let job_uuid = job_uuid.clone();
 
-                let output = file_stream.collect::<Vec<protocol::TileFiles>>().await;
-                (tile, output)
+        async move {
+            match result {
+                Ok((tile, schema, batch_stream)) => stream_to_tile_files(
+                    max_partfile_size, 
+                    object_store.clone(),
+                    store_path,
+                    commit_id,
+                    job_uuid,
+                    start_partnum,
+                    tile,
+                    schema, 
+                    batch_stream).await,
+                Err(e) => panic!("Error: {:?}", e),
             }
-            Err(e) => panic!("Error: {:?}", e),
         }
-    }).map(|fut| {
-        tokio::spawn(fut)
-    }).collect::<Vec<_>>().await;
+    }).collect::<Vec<Vec<protocol::TileFiles>>>().await;
 
-    let mut results = Vec::with_capacity(handles.len());
-    for handle in handles {
-        results.push(handle.await.unwrap());
-    }
-    results
-
-
-
-
-    todo!("implement streaming writes")
+    // flatten the results into a single vector
+    let foo = results.into_iter().flatten().collect();
+    foo
 }
 
 // todo: deprecate this and use the operation directly
@@ -300,7 +345,6 @@ mod tests {
         );
 
         let log = table_store.default_transaction_log().await.unwrap();
-        let head = log.head_main().await.unwrap();
 
         let parent_id = log.head_id_main().await.unwrap();
     

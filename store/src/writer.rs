@@ -76,13 +76,13 @@ fn estimate_rows_to_write(batch: &RecordBatch, max_bytes: usize, row_written:usi
 }
 
 
-pub(crate) fn stream_batches_to_bytes<'a>(
+pub(crate) fn stream_batches_to_bytes(
+    max_bytes: usize,
     schema: SchemaRef, 
-    input: &'a mut SendableRecordBatchStream,
-    max_bytes: usize
-) -> Box<dyn Stream<Item = Bytes> + Send + Sync + 'a> 
+    mut input: SendableRecordBatchStream,
+) -> Pin<Box<dyn Stream<Item = Bytes> + Send>>
 {
-    Box::new(stream! {
+    Box::pin(stream! {
         let mut pending = None::<RecordBatch>;
         let mut continue_stream = true;
 
@@ -97,37 +97,29 @@ pub(crate) fn stream_batches_to_bytes<'a>(
             }
 
             while pending.is_none() && continue_stream {
-                if let Some(result) = input.next().await {
-                    match result {
-                        Ok(batch) => {
-                            let batch_rows = batch.num_rows();
-                            let rows_to_write = estimate_rows_to_write(&batch, max_bytes, written_rows);
+                if let Some(batch) = input.next().await {
+                    let batch_rows = batch.num_rows();
+                    let rows_to_write = estimate_rows_to_write(&batch, max_bytes, written_rows);
 
-                            if (rows_to_write == 0) {
-                                pending = Some(batch);
-                            }
-                            else if (rows_to_write < batch_rows) {
-                                // writing a subset of the batch, slice it first
-                                let subbatch = batch.slice(0, rows_to_write);
-                                writer.write(&subbatch)
-                                    .expect("Writing batch");
-
-                                pending = Some(batch.slice(rows_to_write, batch_rows - rows_to_write));
-                            } else {
-                                // writing the entire batch
-                                writer.write(&batch)
-                                    .expect("Writing batch");
-                            };
-
-                            // TODO: consider implementing AsyncWriter support in Arrow, so we can
-                            // mp-stream row blocks to the object store. as written, this requires
-                            // the entire partfile to fit in memory
-                        },
-                        Err(e) => {
-                            println!("Error reading batch: {}", e);
-                            continue_stream = false;
-                        }
+                    if (rows_to_write == 0) {
+                        pending = Some(batch);
                     }
+                    else if (rows_to_write < batch_rows) {
+                        // writing a subset of the batch, slice it first
+                        let subbatch = batch.slice(0, rows_to_write);
+                        writer.write(&subbatch)
+                            .expect("Writing batch");
+
+                        pending = Some(batch.slice(rows_to_write, batch_rows - rows_to_write));
+                    } else {
+                        // writing the entire batch
+                        writer.write(&batch)
+                            .expect("Writing batch");
+                    };
+
+                    // TODO: consider implementing AsyncWriter support in Arrow, so we can
+                    // mp-stream row blocks to the object store. as written, this requires
+                    // the entire partfile to fit in memory
                } else {
                     continue_stream = false;
                 }
@@ -140,15 +132,15 @@ pub(crate) fn stream_batches_to_bytes<'a>(
     })
 }
 
-pub(crate) fn stream_bytes_to_objects<'a>(
+pub(crate) fn stream_bytes_to_objects<'a: 'b, 'b>(
     tile: &Tile,
     object_store: Arc<dyn ObjectStore>,
     store_path: &'a str,
     commit_id: &'a Vec<u8>,
     job_uuid: &'a Uuid,
     start_partnum: usize,
-    input: &'a mut Pin<Box<dyn Stream<Item = Bytes> + Send + 'a>>,
-) -> Box<dyn Stream<Item = protocol::TileFiles> + Send + 'a> 
+    input: &'a mut Pin<Box<dyn Stream<Item = Bytes> + Send>>,
+) -> Pin<Box<dyn Stream<Item = protocol::TileFiles> + Send + 'b>> 
 {
     let partition_path = tile.1.iter().map(|x| x.to_string()).collect::<Vec<String>>().join("/");
     let commit_id = hex::encode(commit_id);
@@ -160,11 +152,11 @@ pub(crate) fn stream_bytes_to_objects<'a>(
         tile.0,
         partition_path);
 
-    let mut partnum = start_partnum;
+    let partnum = start_partnum;
 
-    Box::new(stream! {
+    Box::pin(stream! {
         while let Some(bytes) = input.next().await {
-            let object_path = format!("part-{partnum:05}-{job_uuid}-c000.snappy.parquet");
+            let object_path = format!("{prefix}/part-{partnum:05}-{job_uuid}-c000.snappy.parquet");
             let object_path: ObjectStorePath = object_path.try_into().unwrap();
 
             let mut file = protocol::File::default();
@@ -184,46 +176,5 @@ pub(crate) fn stream_bytes_to_objects<'a>(
             yield tile_files;
         }
     })
-}
-
-pub(crate) async fn write_batch(table_store: &TableStore, tile: &protocol::Tile, batch: Arc<RecordBatch>) -> CalicoResult<protocol::File> {
-    let data_store = table_store.data_store_for(tile).await?;
-
-    // todo: make path
-    // /{store-path}/object/{commit.uuid}/{cf}/{slice}/part-{partnum:05}-{job.uuid}-c000.snappy.parquet
-    let object_path: ObjectStorePath = table_store.object_path_for(&tile).try_into().unwrap();
-
-    let serialized_batch = write_batch_to_bytes(batch)?;
-
-    let mut file = protocol::File::default();
-
-    file.file_path = object_path.to_string();
-    file.file_type = protocol::FileType::Data as i32;
-    file.file_size = serialized_batch.len().try_into().unwrap();
-
-    // todo: timestamp? do we care?
-
-    data_store.put(&object_path, serialized_batch).await?;
-
-    Ok(file)
-}
-
-// Write all the split batches in parallel to the object store(s)
-pub(crate) async fn write_batches(table_store: &TableStore, 
-                                  split_batches: &Vec<(protocol::Tile, Arc<RecordBatch>)>) -> 
-                                  CalicoResult<Vec<(protocol::Tile, protocol::File)>> {
-
-    // stream all of the batches for write
-    let output = stream::iter(split_batches)
-        .then(|(tile, batch)| async move {
-            let prot_file = write_batch(&table_store, &tile, batch.clone()).await?;
-            let tuple = (tile.clone(), prot_file);
-
-            Ok(tuple)
-        })
-        .collect::<Vec<CalicoResult<(protocol::Tile, protocol::File)>>>().await;
-
-    // Invert from Vec<Result> -> Result<Vec>
-    output.into_iter().collect::<CalicoResult<Vec<(protocol::Tile, protocol::File)>>>()
 }
 
