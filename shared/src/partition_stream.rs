@@ -7,27 +7,26 @@ use futures::Stream;
 use pin_project::pin_project;
 
 #[pin_project]
-struct PartitionStream <P, I, O, F, S> 
+struct PartitionStream <P, I, O, E, F, S> 
 where
     S: Stream<Item = I>,
 {
     #[pin]
     source: S,
-    new_children: Vec<P>,
+    new_children: Vec<Result<P,E>>,
     root_waker: Option<std::task::Waker>,
     child_buffer: HashMap<P, Vec<O>>,
     child_waker: HashMap<P, std::task::Waker>,
     partition: F,
 }
 
-
-pub trait PartitionStreamExt<P, O, F>: Stream
+pub trait PartitionStreamExt<P, O, E, F>: Stream
 {
-    fn partition_by(self, partition: F) -> PartitionStreamRoot<P, Self::Item, O, F, Self>
+    fn partition_by(self, partition: F) -> PartitionStreamRoot<P, Self::Item, O, E, F, Self>
     where
-        P: std::cmp::Eq + std::hash::Hash + Clone + Send + Sync,
-        F: Fn(Self::Item) -> Vec<(P, O)>,
-        Self: Sized + Send + Sync + 'static,
+        P: std::cmp::Eq + std::hash::Hash + Clone,
+        F: Fn(Self::Item) -> Result<Vec<(P, O)>, E>,
+        Self: Sized + Send,
     {
         let source = PartitionStream::new(self, partition);
 
@@ -37,7 +36,7 @@ pub trait PartitionStreamExt<P, O, F>: Stream
     }
 }
 
-impl<P, O, F, S> PartitionStreamExt<P, O, F> for S where S: Stream + ?Sized {}
+impl<P, O, E, F, S> PartitionStreamExt<P, O, E, F> for S where S: Stream + ?Sized {}
 
 enum InnerPollResult {
     Pending,
@@ -46,10 +45,10 @@ enum InnerPollResult {
 }
 
 
-impl <P, I, O, F, S> PartitionStream <P, I, O, F, S> 
+impl <P, I, O, E, F, S> PartitionStream <P, I, O, E, F, S> 
 where
     P: std::cmp::Eq + std::hash::Hash + Clone,
-    F: Fn(I) -> Vec<(P, O)>,
+    F: Fn(I) -> Result<Vec<(P, O)>, E>,
     S: Stream<Item = I>,
 {
     fn new(source: S, partition: F) -> Arc<Mutex<Self>> {
@@ -104,9 +103,8 @@ where
     fn poll_next_root(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>
-    ) -> std::task::Poll<Option<P>> {
+    ) -> std::task::Poll<Option<Result<P,E>>> {
         if let Some(output) = self.as_mut().get_next_child() {
-            println!("ROOT:  have a new child");
             return std::task::Poll::Ready(Some(output));
         }
         {   
@@ -153,7 +151,7 @@ where
         return None
     }
     
-    fn get_next_child(self: Pin<&mut Self>) -> Option<P> {
+    fn get_next_child(self: Pin<&mut Self>) -> Option<Result<P, E>> {
         let this = self.project();
 
         this.new_children.pop()
@@ -178,17 +176,24 @@ where
         match this.source.poll_next(cx) {
             Poll::Ready(Some(input)) => {
                 // We got some output, call the proc to partition it
-                let output = (this.partition)(input);
-
-                for (partition, item) in output {
-                    if let Some(buffer) = this.child_buffer.get_mut(&partition) {
-                        // Adding to an existing buffer, wake the existing child
-                        buffer.push(item);
-                        this.child_waker.remove(&partition).map(|waker| waker.wake());
-                    } else {
-                        // new child wake the root stream
-                        this.child_buffer.insert(partition.clone(), vec![item]);
-                        this.new_children.push(partition);
+                match (this.partition)(input) {
+                    Ok(output) => {
+                        for (partition, item) in output {
+                            if let Some(buffer) = this.child_buffer.get_mut(&partition) {
+                                // Adding to an existing buffer, wake the existing child
+                                buffer.push(item);
+                                this.child_waker.remove(&partition).map(|waker| waker.wake());
+                            } else {
+                                // new child wake the root stream
+                                this.child_buffer.insert(partition.clone(), vec![item]);
+                                this.new_children.push(Ok(partition));
+                                this.root_waker.take().map(|waker| waker.wake());
+                            }
+                        }        
+                    },
+                    Err(e) => {
+                        // Error, wake the root stream
+                        this.new_children.push(Err(e));
                         this.root_waker.take().map(|waker| waker.wake());
                     }
                 }
@@ -204,32 +209,39 @@ where
 
 }
 
-pub struct PartitionStreamRoot<P, I, O, F, S> 
+pub struct PartitionStreamRoot<P, I, O, E, F, S> 
 where
     S: Stream<Item = I>,
 {
-    source: Arc<Mutex<PartitionStream<P, I, O, F, S>>>,
+    source: Arc<Mutex<PartitionStream<P, I, O, E, F, S>>>,
 }
 
-impl <P, I, O, F, S>  Stream for PartitionStreamRoot<P, I, O, F, S> 
+impl <P, I, O, E, F, S>  Stream for PartitionStreamRoot<P, I, O, E, F, S> 
 where
-    P: std::cmp::Eq + std::hash::Hash + Clone + Send + Sync + 'static,
-    O: Send + Sync + Sized + 'static,
-    I: Send + Sync + 'static,
-    F: Fn(I) -> Vec<(P, O)> + Sync + Send + 'static,
-    S: Stream<Item = I> + Sync + Send + Unpin + 'static,
+    P: std::cmp::Eq + std::hash::Hash + Clone + Unpin + Send + Sync + 'static,
+    I: 'static,
+    O: Send + 'static,
+    E: Send + 'static,
+    F: Fn(I) -> Result<Vec<(P, O)>, E> + Send + 'static,
+    S: Stream<Item = I> + Unpin + Send + 'static,
 {
-    type Item = (P, PartitionStreamChild<P, I, O, F, S>);
+    type Item = Result<(P, Pin<Box<dyn Stream<Item=O> + Unpin + Send + Sync>>), E>;
 
     fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if let Ok(mut guard) = self.source.try_lock() {
             match PartitionStream::poll_next_root(Pin::new(&mut guard), cx) {
-                Poll::Ready(Some(partition)) => {
-                    let partition_stream_child = PartitionStreamChild {
-                        source: self.source.clone(),
-                        partition: partition.clone(),
-                    };
-                    Poll::Ready(Some((partition, partition_stream_child)))
+                Poll::Ready(Some(child)) => {
+                    match child {
+                        Ok(partition) => {
+                            let partition_stream_child = PartitionStreamChild {
+                                source: self.source.clone(),
+                                partition: partition.clone(),
+                            };
+                            Poll::Ready(Some(Ok((partition, Box::pin(partition_stream_child)))))
+                        },
+                        Err(e) => Poll::Ready(Some(Err(e)))
+                        
+                    }
                 }
                 Poll::Ready(None) => Poll::Ready(None),
                 Poll::Pending => {
@@ -245,19 +257,20 @@ where
 }
 
 
-pub struct PartitionStreamChild<P, I, O, F, S>
+pub struct PartitionStreamChild<P, I, O, E, F, S>
 where
     S: Stream<Item = I>,
 {
-    source: Arc<Mutex<PartitionStream<P, I, O, F, S>>>,
+    source: Arc<Mutex<PartitionStream<P, I, O, E, F, S>>>,
     partition: P,
 }
 
-impl <P, I, O, F, S> Stream for PartitionStreamChild<P, I, O, F, S> 
+impl <P, I, O, E, F, S> Stream for PartitionStreamChild<P, I, O, E, F, S> 
 where
     P: std::cmp::Eq + std::hash::Hash + Clone,
-    F: Fn(I) -> Vec<(P, O)>,
+    F: Fn(I) -> Result<Vec<(P, O)>, E>,
     S: Stream<Item = I> + Unpin,
+
 {
     type Item = O;
 
@@ -307,18 +320,27 @@ mod test {
             (6, vec![6, 12]),
         ];
 
+        #[derive(Debug)]
+        enum NoError {}
+
         let stream = stream::iter(input);
         let partitioned_stream = stream.partition_by(|record| {
             let mapped_record = record
                 .into_iter()
-                .map(|x| (x.0.clone(), x))
+                .map(|x| (x.0.clone(), x.1))
                 .collect::<BTreeMap<_, _>>();
-            mapped_record.iter().map(|(key, value)| {(key.clone(), value.clone())}).collect::<Vec<_>>()
+            let mapped_records = mapped_record.iter().map(|(key, value)| {(key.clone(), value.clone())}).collect::<Vec<_>>();
+            Ok::<_,NoError>(mapped_records)
         });
 
-        let handles = partitioned_stream.map(|(partition, stream)| async move {
-            let output = stream.map(|(_, data)| data).collect::<Vec<i32>>().await;
-            (partition.clone(), output)
+        let handles = partitioned_stream.map(|result| async move {
+            match result {
+                Ok((partition, stream)) => {
+                    let output = stream.collect::<Vec<i32>>().await;
+                    (partition, output)
+                }
+                Err(e) => panic!("Error: {:?}", e),
+            }
         }).map(|fut| {
             tokio::spawn(fut)
         }).collect::<Vec<_>>().await;
