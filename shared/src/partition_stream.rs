@@ -163,14 +163,16 @@ where
     ) -> InnerPollResult {
         let this = self.project();
 
+        // todo: this should allow us to inspect the size of the buffers and decide whether to backpressure
+
         // If we have any buffered output waiting for a child stream to pick it up, don't request more
         if this.child_buffer.values().map(|v| v.len()).sum::<usize>() > 0 {
-            return InnerPollResult::Pending;
+            return InnerPollResult::Ready;
         }
 
         // If we have any new children waiting to be spawned, don't request more
         if this.new_children.len() != 0 {
-            return InnerPollResult::Pending;
+            return InnerPollResult::Ready;
         }
 
         match this.source.poll_next(cx) {
@@ -201,9 +203,16 @@ where
                 InnerPollResult::Ready
             },
             Poll::Ready(None) => {
+                this.root_waker.take().map(|waker| waker.wake());
+                let partitions = this.child_buffer.keys().cloned().collect::<Vec<_>>();
+                for partition in partitions {
+                    this.child_waker.remove(&partition).map(|waker| waker.wake());
+                }
                 InnerPollResult::Done
             },
-            Poll::Pending => InnerPollResult::Pending,
+            Poll::Pending => {
+                InnerPollResult::Pending
+            },
         }
     }
 
@@ -277,10 +286,13 @@ where
     fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if let Ok(mut guard) = self.source.try_lock() {
             match PartitionStream::poll_child(Pin::new(&mut *guard), cx, self.partition.clone()) {
-                Poll::Ready(Some(output)) => Poll::Ready(Some(output)),
-                Poll::Ready(None) => Poll::Ready(None),
+                Poll::Ready(Some(output)) => {
+                    Poll::Ready(Some(output))
+                },
+                Poll::Ready(None) => {
+                    Poll::Ready(None)
+                },
                 Poll::Pending => {
-                    cx.waker().wake_by_ref();
                     Poll::Pending
                 }
             }

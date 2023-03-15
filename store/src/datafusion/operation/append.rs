@@ -9,7 +9,7 @@ use futures::stream::StreamExt;
 use object_store::ObjectStore;
 use uuid::Uuid;
 
-use crate::log::PendingCommit;
+use crate::log::{PendingCommit, MAIN};
 use crate::partition::{TiledRecordBatchStream, stream_from_batches, stream_from_tiled_batches, partition_batch_stream, SendableRecordBatchStream, Tile};
 use crate::table::TableStore;
 use crate::protocol;
@@ -130,6 +130,7 @@ impl Operation<protocol::Commit> for AppendOperation {
         let object_store = table_store.default_object_store().await?;
         let store_path = "/".to_string();
         let commit_id = self.pending_commit.commit_id.clone();
+        println!("{}: starting append operation", hex::encode(&commit_id));
 
         let all_tile_files:Vec<protocol::TileFiles> = match self.batch_data {
             BatchData::None => panic!("Should always have a stream or a list of tilefiles to commit"),
@@ -239,33 +240,48 @@ async fn tiled_stream_to_tile_files (
     start_partnum: usize,
     tiled_stream: TiledRecordBatchStream
 ) -> Vec<protocol::TileFiles> 
-{    
-    let results = tiled_stream.then(|result| {
-        let store_path = store_path.clone();
-        let object_store = object_store.clone();
-        let commit_id = commit_id.clone();
-        let job_uuid = job_uuid.clone();
+{
+    let handles = tiled_stream.map(|result| 
+        match result {
+            Ok((tile, schema, batch_stream)) => {
+                let store_path = store_path.clone();
+                let object_store = object_store.clone();
+                let commit_id = commit_id.clone();
+                let job_uuid = job_uuid.clone();
 
-        async move {
-            match result {
-                Ok((tile, schema, batch_stream)) => stream_to_tile_files(
-                    max_partfile_size, 
-                    object_store.clone(),
-                    store_path,
-                    commit_id,
-                    job_uuid,
-                    start_partnum,
-                    tile,
-                    schema, 
-                    batch_stream).await,
-                Err(e) => panic!("Error: {:?}", e),
-            }
-        }
-    }).collect::<Vec<Vec<protocol::TileFiles>>>().await;
+                async move {
+                    let tile_files = stream_to_tile_files(
+                        max_partfile_size, 
+                        object_store.clone(),
+                        store_path,
+                        commit_id,
+                        job_uuid,
+                        start_partnum,
+                        tile,
+                        schema, 
+                        batch_stream).await;
+                    
+                    tile_files
+                }
+            },
+
+            Err(e) => panic!("Error: {:?}", e)
+    }).map(|fut| {
+        tokio::spawn(fut)
+    }).collect::<Vec<_>>().await;
+    
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        results.push(handle.await.unwrap());
+    }
 
     // flatten the results into a single vector
-    let foo = results.into_iter().flatten().collect();
-    foo
+    let flattened = results.into_iter().flatten().collect();
+
+    for tile_files in &flattened {
+        println!("COMPLETED STREAM {:?}", tile_files);
+    }
+    flattened
 }
 
 // todo: deprecate this and use the operation directly
@@ -277,9 +293,13 @@ pub async fn append_operation(
     let log = table_store.default_transaction_log().await?;
     let parent_id = log.head_id_main().await?;
 
-    AppendOperation::init(&parent_id)
+    let commit = AppendOperation::init(&parent_id)
         .with_batch(batch)
-        .execute(table_store).await
+        .execute(table_store).await?;
+
+    let _new_head = log.fast_forward(MAIN, &commit.commit_id).await.unwrap();
+
+    Ok(commit)
 }
 
 // todo: deprecate this and use the operation directly
@@ -292,10 +312,14 @@ pub async fn append_operation_at(
     let log = table_store.default_transaction_log().await?;
     let parent_id = log.head_id_main().await?;
 
-    AppendOperation::init(&parent_id)
+    let commit = AppendOperation::init(&parent_id)
         .with_batch(batch)
         .with_commit_timestamp(timestamp)
-        .execute(table_store).await
+        .execute(table_store).await?;
+
+    let _new_head = log.fast_forward(MAIN, &commit.commit_id).await.unwrap();
+
+    Ok(commit)
 }
     
 
@@ -303,6 +327,7 @@ pub async fn append_operation_at(
 mod tests {
     use std::sync::Arc;
 
+    use async_stream::stream;
     use tempfile::tempdir;
     use crate::datafusion::operation::append::{ AppendOperation, append_operation };
     use crate::datafusion::operation::Operation;
@@ -361,6 +386,45 @@ mod tests {
         // make sure the files are in the object store
     }
 
+    #[tokio::test]
+    async fn test_mega_append() {
+        let temp = tempdir().unwrap();
+        let ctx = provision_ctx(temp.path());
+
+        let col_groups = vec![COLGROUP_1, COLGROUP_2];
+        let table_store = Arc::new(provision_store(&ctx, &col_groups).await);
+/*
+        let batch_stream = Box::pin(stream! {
+            let col_groups = vec![COLGROUP_1, COLGROUP_2];
+
+            for i in 0..10 {
+                let batch = make_data(1_000_000, i * 10_000_000, 0,  &col_groups);
+                yield batch;
+            }
+        });
+ */
+        // todo: make this use a stream
+        // todo: make this count the size & calculate bytes per second
+        // todo: make this test the size boundaries
+        // todo: make this reconstruct the files and verify the data
+
+        let batch = make_data(1_000_000, 0, 0,  &col_groups);
+        let log = table_store.default_transaction_log().await.unwrap();
+
+        let parent_id = log.head_id_main().await.unwrap();
+    
+        let commit = AppendOperation::init(&parent_id)
+            .with_batch(batch)
+            .with_commit_message("first commit")
+            .execute(table_store.clone()).await.unwrap();
+
+        let _new_ref = log.fast_forward(MAIN, &commit.commit_id).await.unwrap();
+        let new_head = log.head_main().await.unwrap();
+
+        let history = new_head.history(100).await.unwrap();
+        assert_eq!(history.len(), 1);
+        // make sure the files are in the object store
+    }
 
 
 

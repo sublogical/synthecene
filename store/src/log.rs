@@ -231,6 +231,7 @@ impl PendingCommit {
     pub async fn commit(self, log: &TransactionLog) -> CalicoResult<protocol::Commit> {
         let mut commit = protocol::Commit::default();
 
+        commit.commit_id = self.commit_id.to_vec();
         commit.parent_id = self.parent_id.to_vec();
         commit.timestamp = match self.commit_timestamp {
             Some(ts) => ts,
@@ -249,7 +250,7 @@ impl PendingCommit {
         let path = TransactionLog::commit_path(&commit.commit_id)?;
         let data = Bytes::from(buf);
         
-        info!("{}: storing commit record", hex::encode(&commit.commit_id));
+        println!("{}: storing commit record at {}", hex::encode(&commit.commit_id), path);
 
         // Note that this does not use the 'put_if_not_exist' because it is 
         // expected that a [u8; 20] rand is always unique.
@@ -478,7 +479,7 @@ impl TransactionLog {
         let path = Self::commit_path(&commit.commit_id)?;
         let data = Bytes::from(buf);
         
-        info!("{}: storing commit record", hex::encode(&commit.commit_id));
+        println!("{}: storing commit record at {}", hex::encode(&commit.commit_id), path);
 
         // Note that this does not use the 'put_if_not_exist' because it is 
         // expected that a [u8; 20] rand is always unique.

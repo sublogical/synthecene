@@ -11,6 +11,7 @@ use futures::Stream;
 use log::info;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
+use std::fmt::Display;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::pin::Pin;

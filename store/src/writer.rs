@@ -1,7 +1,6 @@
-use arrow::array::Int32Array;
 use arrow::datatypes::SchemaRef;
+use async_stream::stream;
 use bytes::Bytes;
-use datafusion::scalar::ScalarValue;
 use futures::Stream;
 use object_store::ObjectStore;
 use object_store::path::Path as ObjectStorePath;
@@ -12,14 +11,13 @@ use std::sync::Arc;
 
 use arrow::{datatypes::Schema};
 use arrow::record_batch::RecordBatch;
-use futures::stream::{self, StreamExt };
+use futures::stream::StreamExt;
 use parquet::arrow::arrow_writer::ArrowWriter;
 use parquet::file::properties::WriterProperties;
 
-use calico_shared::result::CalicoResult;
 use crate::partition::{SendableRecordBatchStream, Tile};
 use crate::protocol;
-use crate::table::{TableStore, OBJECT_PATH};
+use crate::table::OBJECT_PATH;
 
 trait StoreWriter {
     fn write_batch(&mut self, batch:RecordBatch);
@@ -48,18 +46,6 @@ impl StoreWriter for ParquetWriter {
     }
 }
 
-// Writes a single RecordBatch into an in-memory parquet file
-pub(crate) fn write_batch_to_bytes(batch: Arc<RecordBatch>) -> CalicoResult<Bytes> {
-    let mut buffer = Vec::new();
-    let mut writer = ArrowWriter::try_new(&mut buffer, batch.schema(), None).unwrap();
-
-    writer.write(&batch)?;
-    writer.close()?;
-
-    Ok(Bytes::from(buffer))
-}
-use async_stream::stream;
-
 fn estimate_rows_to_write(batch: &RecordBatch, max_bytes: usize, row_written:usize) -> usize {
     let mut buffer = Vec::new();
     let mut writer = ArrowWriter::try_new(&mut buffer, batch.schema(), None).unwrap();
@@ -75,7 +61,6 @@ fn estimate_rows_to_write(batch: &RecordBatch, max_bytes: usize, row_written:usi
     rows_to_write
 }
 
-
 pub(crate) fn stream_batches_to_bytes(
     max_bytes: usize,
     schema: SchemaRef, 
@@ -90,19 +75,21 @@ pub(crate) fn stream_batches_to_bytes(
             let mut buffer = Vec::new();
             let mut writer = ArrowWriter::try_new(&mut buffer, schema.clone(), None).unwrap();
             let mut written_rows = 0;
+            let mut continue_file = true;
 
-            if let Some(batch) = &pending {
-                writer.write(&batch).unwrap();
-                pending = None;
-            }
+            while continue_file && continue_stream {
+                let mut next_batch = pending.take();
+                if next_batch.is_none() {
+                    next_batch = input.next().await;
+                }
 
-            while pending.is_none() && continue_stream {
-                if let Some(batch) = input.next().await {
+                if let Some(batch) = next_batch {
                     let batch_rows = batch.num_rows();
                     let rows_to_write = estimate_rows_to_write(&batch, max_bytes, written_rows);
 
                     if (rows_to_write == 0) {
                         pending = Some(batch);
+                        continue_file = false;
                     }
                     else if (rows_to_write < batch_rows) {
                         // writing a subset of the batch, slice it first
@@ -111,16 +98,19 @@ pub(crate) fn stream_batches_to_bytes(
                             .expect("Writing batch");
 
                         pending = Some(batch.slice(rows_to_write, batch_rows - rows_to_write));
+                        continue_file = false;
                     } else {
                         // writing the entire batch
                         writer.write(&batch)
                             .expect("Writing batch");
                     };
 
+                    written_rows += rows_to_write;
+
                     // TODO: consider implementing AsyncWriter support in Arrow, so we can
                     // mp-stream row blocks to the object store. as written, this requires
                     // the entire partfile to fit in memory
-               } else {
+                } else {
                     continue_stream = false;
                 }
             }
@@ -152,7 +142,7 @@ pub(crate) fn stream_bytes_to_objects<'a: 'b, 'b>(
         tile.0,
         partition_path);
 
-    let partnum = start_partnum;
+    let mut partnum = start_partnum;
 
     Box::pin(stream! {
         while let Some(bytes) = input.next().await {
@@ -174,6 +164,8 @@ pub(crate) fn stream_bytes_to_objects<'a: 'b, 'b>(
             tile_files.file.push(file);
 
             yield tile_files;
+
+            partnum += 1;
         }
     })
 }
