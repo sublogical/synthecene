@@ -91,9 +91,24 @@ cargo install cargo-generate
 * Google Docs
   * read docs via API
   * plug-in https://developers.google.com/apps-script/guides/dialogs#custom_sidebars
-  
+
+
+## High-Level Priorities
+
+* Be able to show things working (get input, perform inference, show results)
+* Be able to collect data (crawling, direct input)
+* Be able to collect feedback (usage, HITL, curation)
+* Be able to orchestrate complex work tasks 
+* Be able to orchestrate complex serving
+
+
 
 ## High-Level TODOs
+
+* Statefulness
+  * Store stuff in mongodb, be able to retrieve it
+  * Retrieve stuff, pass as context for inference
+  * async
 
 * Initial Deep Crawl Support
   * Get crawler to support single domain deep crawl via CLI
@@ -102,6 +117,23 @@ cargo install cargo-generate
   * Create crawl tasks via CLI (including bullk)
   * Implement base graphql rpc service (or decide to use grpc to vue)
   * Pilot crawl CX (list, manage, create, delete, search)
+* Implement dexter - runtime serving orchestrator ala 'unruly goats'
+  * async dependency graph using actors
+  * stateful
+  * storage (mongo, ddb)
+  * streaming
+  * supports cyclic dependencies (e.g. memories)
+  * supports external sources (e.g. SCANN, FAISS, ElasticSearch, KG, etc)
+  * supports inference
+  * built-in caching
+  * addressable (multiple clients can connect to same serving graph)
+* Implement sinister - offline task orchestrator (maybe airflow?)
+  * serving using dexter
+  * annotation
+  * streaming
+  * spark/flink for processing with SQL
+  * serverless processors in python, rust, whatever
+  * storage in deltalake, mongo, ddb
 * Implement base signal service
   * Get data lake working with Spark
   * Create basic crawler signals (spam detection, abuse detection, clean text) with heuristics

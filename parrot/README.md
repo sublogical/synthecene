@@ -1,3 +1,10 @@
+## HOWTO
+
+### Setup CLASP
+```
+sudo npm install -g @google/clasp
+clasp login
+```
 
 ## Design Questions
 ### How much unique code really needs to exist for AppScript/Google?
@@ -24,7 +31,7 @@
 * CX
   * Get Vue and Vuetify working: https://ramblings.mcpher.com/vuejs-apps-script-add-ons/
   * ~~Get selected text~~
-  * Trigger actions when selected text changes
+  * ~~Trigger actions when selected text changes~~
   * Sidebar
     * ~~Task action by button~~
     * ~~Display preview~~
