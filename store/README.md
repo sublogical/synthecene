@@ -116,13 +116,11 @@ UPDATE
   * Support string based IDs
   * Support multiple IDs
   * Sensible errors for ID failures
-  * Move partitioning to use discrete values of a set of partition columns
   * Read schema from transaction log
   * ~~Support more int-based IDs~~
   * ~~Make ID column explicit part of column-group definition~~
 * Operator API
   * Checkpoint Operator
-  * Support streaming write
   * Refactor operator pattern for disaggregated writes
   * DDL Operations
   * Direct Checkpoint
@@ -139,6 +137,7 @@ UPDATE
   * Write with Operator
   * Direct Squash from Rust
   * Disaggregated Squash from Rust
+  * ~~Support streaming write~~
   * ~~Move to Command Pattern~~
   * ~~Direct Write from Rust~~
 * Transaction Log
@@ -182,8 +181,9 @@ UPDATE
   * ~~Support s3 storage~~ (untested)
   * ~~Support in-memory storage (for pre-commit read consistency)~~ (untested)
 * Partitioning
-  * Support explicit column-based partitions
   * Support multi-column partitions
+  * Support defining partition columns in CF config
+  * support windowed timeseries
   * Support bucketing/clustering
   * Support z-order
   * ~~Support all integer numeric partitions~~

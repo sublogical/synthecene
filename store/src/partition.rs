@@ -4,21 +4,18 @@ use arrow::datatypes::{Schema, DataType, SchemaRef };
 use arrow::record_batch::RecordBatch;
 use arrow::error::Result as ArrowResult;
 use calico_shared::partition_stream::PartitionStreamExt;
-use datafusion::datasource::listing::PartitionedFileStream;
-use datafusion::physical_plan::memory::MemoryStream;
 use datafusion::scalar::ScalarValue;
 use futures::Stream;
 use log::info;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
-use std::fmt::Display;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use calico_shared::result::{CalicoResult, CalicoError};
-use crate::protocol::{self, column_group_metadata};
+use calico_shared::result::CalicoError;
+use crate::protocol;
 use crate::table::TableStore;
 
 #[derive(Debug)]
@@ -44,6 +41,18 @@ impl From <protocol::Tile> for Tile {
     }
 }
 
+impl Into<protocol::Tile> for Tile {
+    fn into(self) -> protocol::Tile {
+        let (column_group, partition_key) = self;
+        let partition_key:Vec<protocol::PartitionValue> = partition_key.into_iter().map(|v| v.into()).collect();
+
+        protocol::Tile {
+            column_group,
+            partition_key: partition_key.into_iter().map(|v| v.into()).collect(),
+        }
+    }
+}
+
 impl From<protocol::PartitionValue> for ScalarValue {
     fn from(partition_value: protocol::PartitionValue) -> Self {
         match partition_value.value {            
@@ -57,6 +66,32 @@ impl From<protocol::PartitionValue> for ScalarValue {
     }
 }
 
+
+impl Into<protocol::PartitionValue> for ScalarValue {
+    fn into(self) -> protocol::PartitionValue {
+        match self {
+            ScalarValue::Int64(v) => protocol::PartitionValue {
+                value: Some(protocol::partition_value::Value::Int64Value(v.unwrap())),
+            },
+            ScalarValue::UInt64(v) => protocol::PartitionValue {
+                value: Some(protocol::partition_value::Value::Uint64Value(v.unwrap())),
+            },
+            ScalarValue::Float64(v) => protocol::PartitionValue {
+                value: Some(protocol::partition_value::Value::DoubleValue(v.unwrap())),
+            },
+            ScalarValue::Utf8(v) => protocol::PartitionValue {
+                value: Some(protocol::partition_value::Value::StringValue(v.unwrap())),
+            },
+            ScalarValue::Boolean(v) => protocol::PartitionValue {
+                value: Some(protocol::partition_value::Value::BoolValue(v.unwrap())),
+            },
+            ScalarValue::Null => protocol::PartitionValue {
+                value: None,
+            },
+            _ => panic!("Unsupported partition value type"),
+        }
+    }
+}
 
 
 pub type SendableRecordBatchStream = Pin<Box<dyn Stream<Item = RecordBatch> + Sync + Send + Unpin>>;
@@ -73,10 +108,17 @@ fn calc_partitions(column_group_config: &protocol::ColumnGroupMetadata, batch: &
 
     match &column_group_config.partition_spec {
         Some(PartitionSpec::KeyHash(hash)) => calc_hash_partitions(&hash, batch),
+        Some(PartitionSpec::Window(window)) => calc_window_partitions(&window, batch),
         None => panic!("no partitioning scheme"),
     }
 
 }
+
+///
+/// \a\b\c
+/// [1, 2, 3]\[0, 0, 0]\[0, 0, 0]
+
+
 
 fn calc_hash_partitions(key_hash: &protocol::KeyHashPartition, batch: &RecordBatch) -> Int32Array {
 
@@ -178,6 +220,10 @@ fn partition_indices(
 ) -> Result<Vec<(Vec<protocol::PartitionValue>,UInt64Array)>> 
 {
     // todo: support calculating multiple partition values
+
+    // calculate set of indices for each partition level: [(part -> indices)]
+    // set-wise AND to get [[part] -> indices]
+    
     let partitions = calc_partitions(column_group_config, batch);
     let max_partition:i32 = arrow::compute::max(&partitions)
         .ok_or(Error::ComputePartition("unexpected error computing max partition".to_string()))?;
@@ -244,7 +290,7 @@ pub fn stream_from_batches(batches: &Vec<RecordBatch>) -> SendableRecordBatchStr
     Box::pin(stream::iter(batches.clone()))
 }
 
-pub fn stream_from_tiled_batches(tiled_batches:&Vec<(protocol::Tile, Vec<RecordBatch>)>) -> TiledRecordBatchStream {
+pub fn stream_from_tiled_batches(_tiled_batches:&Vec<(protocol::Tile, Vec<RecordBatch>)>) -> TiledRecordBatchStream {
     todo!("support converting from tiled batches to a stream of streams")
 }
 
@@ -319,9 +365,6 @@ pub async fn partition_batch_stream(
 mod tests {
     use datafusion::assert_batches_sorted_eq;
     use tempfile::tempdir;
-    use std::collections::BTreeMap;
-
-    use futures::stream;
     use futures::stream::StreamExt;
 
     use crate::partition::*;
@@ -330,7 +373,7 @@ mod tests {
     async fn resolve_splits(partitioned_stream: TiledRecordBatchStream) -> Vec<((String, Vec<ScalarValue>), Vec<RecordBatch>)>{
         let handles = partitioned_stream.map(|result| async move {
             match result {
-                Ok((partition, schema, stream)) => {
+                Ok((partition, _, stream)) => {
                     let output = stream.collect::<Vec<RecordBatch>>().await;
                     (partition, output)
                 }
@@ -560,6 +603,91 @@ mod tests {
         ];
         assert_batches_sorted_eq!(expected_1, &[(splits[1].1[0]).clone()]);    
 
+    }
+
+    #[tokio::test]
+    async fn windowed_partition_u64() {
+        let temp = tempdir().unwrap();
+        let ctx = provision_ctx(temp.path());
+        let mut table_store = provision_store(&ctx, &vec![]).await;
+
+        let window_size = 1_000;
+        table_store.add_column_group(protocol::ColumnGroupMetadata { 
+            column_group: "time_partitioned".to_string(),
+            id_columns: vec![
+                "timestamp".to_string(),
+                "query_id".to_string()
+            ],
+            partition_spec: Some(protocol::column_group_metadata::PartitionSpec::Window(
+                protocol::WindowPartition { partition_key: "timestamp".to_string(), window_size })
+            )}).await.unwrap();
+
+        let table_store = Arc::new(table_store);
+
+        let batch = 
+            build_table(&vec![
+                (ID_FIELD, u64_col(&vec![
+                    1_001, 
+                    1_002, 
+                    1_003,
+                    1_004, 
+                    2_005, 
+                    2_006, 
+                    2_007, 
+                    2_008, 
+                    100_009])),
+                (FIELD_A, i32_col(&vec![11, 12, 13, 14, 15, 16, 17, 18, 19])),
+                (FIELD_B, i32_col(&vec![21, 22, 23, 24, 25, 26, 27, 28, 29])),
+            ]);
+
+        let schema = batch.schema();
+        let batch_stream = stream_from_batches(&vec![batch]);
+        let partitioned_streams = partition_batch_stream(table_store.clone(), schema, batch_stream).await.unwrap();
+        let mut splits = resolve_splits(partitioned_streams).await;
+        splits.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+        assert_eq!(splits.len(), 3);
+        assert_eq!(splits[0].0.1[0], ScalarValue::UInt64(Some(1)));
+        assert_eq!(splits[0].0.0, "time_partitioned");
+
+        let expected_0 = vec![
+            "+------+----+----+",
+            "| id   | a  | b  |",
+            "+------+----+----+",
+            "| 1001 | 11 | 21 |",
+            "| 1002 | 12 | 22 |",
+            "| 1003 | 13 | 23 |",
+            "| 1004 | 14 | 24 |",
+            "+------+----+----+",
+        ];
+        assert_batches_sorted_eq!(expected_0, &[(splits[0].1[0]).clone()]);    
+
+        assert_eq!(splits[1].0.1[0], ScalarValue::UInt64(Some(2)));
+        assert_eq!(splits[1].0.0, "time_partitioned");
+
+        let expected_1 = vec![
+            "+------+----+----+",
+            "| id   | a  | b  |",
+            "+------+----+----+",
+            "| 2005 | 15 | 25 |",
+            "| 2006 | 16 | 26 |",
+            "| 2007 | 17 | 27 |",
+            "| 2008 | 18 | 28 |",
+            "+------+----+----+",
+        ];
+        assert_batches_sorted_eq!(expected_1, &[(splits[1].1[0]).clone()]);    
+
+        assert_eq!(splits[1].0.1[0], ScalarValue::UInt64(Some(100)));
+        assert_eq!(splits[1].0.0, "time_partitioned");
+
+        let expected_1 = vec![
+            "+--------+----+----+",
+            "| id     | a  | b  |",
+            "+--------+----+----+",
+            "| 100009 | 19 | 29 |",
+            "+--------+----+----+",
+        ];
+        assert_batches_sorted_eq!(expected_1, &[(splits[1].1[0]).clone()]);    
     }
 
 

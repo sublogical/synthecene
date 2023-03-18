@@ -1,8 +1,6 @@
 use datafusion::datasource::file_format::FileFormat;
 use datafusion::datasource::file_format::parquet::ParquetFormat;
 use datafusion::datasource::object_store::ObjectStoreUrl;
-use datafusion::scalar::ScalarValue;
-use uuid::Uuid;
 use std::collections::HashMap;
 use std::sync::Arc;
 use arrow::datatypes::{SchemaRef as ArrowSchemaRef, Schema as ArrowSchema};
@@ -103,19 +101,6 @@ impl TableStore {
 
     pub async fn data_store_for(&self, _tile: &protocol::Tile) -> CalicoResult<Arc<dyn ObjectStore>> {
         Ok(self.object_store.clone())
-    }
-
-    pub fn object_path_for<'a>(&self, tile: &protocol::Tile) ->  String {
-        let token = Uuid::new_v4().to_string();
-        // todo: support paths for multiple partition keys
-        todo!("convert partition key to a string");
-        let partition = 0;
-        format!("{}/{:08}/{}",OBJECT_PATH, partition, token)
-    }
-
-    pub fn full_object_path_for<'a>(&self, tile: &protocol::Tile) -> String {
-        let subpath = self.object_path_for(tile);
-        format!("{}/{}", self.object_store_url, subpath)
     }
 
     pub async fn log_store_for(&self, _tile: &protocol::Tile) -> CalicoResult<Arc<dyn ObjectStore>> {

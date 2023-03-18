@@ -5,6 +5,7 @@ use futures::Stream;
 use object_store::ObjectStore;
 use object_store::path::Path as ObjectStorePath;
 use uuid::Uuid;
+use std::cmp::min;
 use std::fs::File;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -105,7 +106,7 @@ pub(crate) fn stream_batches_to_bytes(
                             .expect("Writing batch");
                     };
 
-                    written_rows += rows_to_write;
+                    written_rows += min(rows_to_write, batch_rows);
 
                     // TODO: consider implementing AsyncWriter support in Arrow, so we can
                     // mp-stream row blocks to the object store. as written, this requires
@@ -123,7 +124,7 @@ pub(crate) fn stream_batches_to_bytes(
 }
 
 pub(crate) fn stream_bytes_to_objects<'a: 'b, 'b>(
-    tile: &Tile,
+    tile: &'a Tile,
     object_store: Arc<dyn ObjectStore>,
     store_path: &'a str,
     commit_id: &'a Vec<u8>,
@@ -161,6 +162,8 @@ pub(crate) fn stream_bytes_to_objects<'a: 'b, 'b>(
                 .expect("Writing object");
 
             let mut tile_files = protocol::TileFiles::default();
+            let prot_tile: protocol::Tile = tile.clone().into();
+            tile_files.tile = Some(prot_tile);
             tile_files.file.push(file);
 
             yield tile_files;
