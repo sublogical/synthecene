@@ -3,8 +3,8 @@ use log::debug;
 use super::{ActorRef, Behavior};
 use std::fmt::Debug;
 
-#[derive(Debug)]
-enum SettableMsg<T> {
+#[derive(Clone, Debug)]
+enum SettableMsg<T: Clone + Send + 'static> {
     Set(T),
     Get(ActorRef<T>),
 }
@@ -144,7 +144,7 @@ mod test {
             let system = system.clone();
 
             tokio::spawn(async move {
-                let get_result = system.ask(|actor_ref| {SettableMsg::Get(actor_ref) }).await.unwrap();
+                let get_result = system.ask(|actor_ref| {SettableMsg::Get(actor_ref) }).await.unwrap().unwrap();
                 output.write().unwrap().replace(get_result);
             });
         }
