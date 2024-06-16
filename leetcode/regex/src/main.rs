@@ -1,17 +1,16 @@
+struct Solution {}
+
+
+#[derive(Copy,Clone)]
+enum State {
+    Unknown,
+    Match,
+    Fail
+}
+
 impl Solution {
-    pub fn is_match_recursive(s: &[u8], p: &[u8]) -> bool {
-        println!("COMPARE {:?} {:?}", s, p);
-
-        if s.len()==0 && p.len() == 0 {
-            println!("found EOS+EOP");
-            return true;
-        }
-
-        if p.len()==0 {
-            println!("found EOP BEFORE EOS");
-            return false;
-        }
-
+    pub fn is_match_recursive(si: usize, pi: usize, state:&mut Vec<State>, s: &[u8], p: &[u8]) -> bool {
+        println!("{}{} check", si, pi);
         fn char_match(c: u8, p:u8) -> bool {
             if p == b'.' || c == p {
                 return true;
@@ -20,35 +19,53 @@ impl Solution {
             }
         }
 
-        if p[0] == b'*' {
-            return is_match_recursive(s, &p[1..]);
-        }
-
-        if p.len() > 1 && p[1] == b'*' {
-            if s.len() == 0 {
-                return is_match_recursive(s, &p[2..]);
-            }
-            println!("found char match {}", char_match(s[0], p[0]));
-
-            let greedy = char_match(s[0], p[0]) && is_match_recursive(&s[1..], p);
-            let lazy = is_match_recursive(s, &p[2..]);
-            println!("found * G: {}, L: {}", greedy, lazy);
-
-            greedy || lazy
+        if si == s.len() && pi == p.len() {
+            return true
+        } else if pi == p.len() {
+            return false
         } else {
-            if s.len() > 0 {
-                char_match(s[0], p[0]) && is_match_recursive(&s[1..], &p[1..])
-            } else {
-                println!("found EOS BEFORE EOP");
-                return false;
+            let me_idx = si * p.len() + pi;
+            match state[me_idx] {
+                State::Match => return true,
+                State::Fail => return false,
+                _ => {}
             }
-        }
+        
+            let result = if p[pi] == b'*' {
+                Self::is_match_recursive(si, pi+1, state, s, p)
+            } else {
+                if pi+1 < p.len() && p[pi+1] == b'*' {
+                    if si >= s.len() {
+                        Self::is_match_recursive(si, pi+2, state, s, p)
+                    } else {
+                        let greedy = char_match(s[si], p[pi]) && Self::is_match_recursive(si+1, pi, state, s, p);
+                        let lazy = Self::is_match_recursive(si, pi+2, state, s, p);
 
+                        greedy || lazy
+                    }
+                } else {
+                    if si < s.len() {
+                        char_match(s[si], p[pi]) && Self::is_match_recursive(si+1, pi+1, state, s, p)
+                    } else {
+                        false
+                    }
+                }
+            };
+            state[me_idx] = if result {
+                State::Match
+            } else {
+                State::Fail
+            };
+            return result;
+                
+        };
     }
 
     pub fn is_match(s: String, p: String) -> bool {
-        is_match_recursive(s.as_bytes(), p.as_bytes())
-    }
+        let mut state = vec![State::Unknown; (s.len()+1) * p.len()];
+
+        Self::is_match_recursive(0, 0, &mut state, s.as_bytes(), p.as_bytes())
+     }
 
 }
 
@@ -57,11 +74,12 @@ fn main() {
         ("ab".to_string(), ".*".to_string(), true),
         ("aa".to_string(), "a".to_string(), false),
         ("ab".to_string(), ".*c".to_string(), false),
-        ("abc".to_string(), "a***abc".to_string(), false),
+        ("abc".to_string(), "a***abc".to_string(), true),
     ];
 
     for test in tests.iter() {
-        let result = is_match(test.0.clone(), test.1.clone());
+        let soln = Solution {};
+        let result = Solution::is_match(test.0.clone(), test.1.clone());
         println!("PASS: {} (output {}))", result == test.2, result);
     }
 }
