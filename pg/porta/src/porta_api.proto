@@ -1,110 +1,17 @@
 syntax = "proto3";
 
-package porta.api;
+package porta_api;
 
-enum LogProtocolVersion {
-    VERSION_0 = 0;
+message MetricRequest {
+    string metric_suri = 1;
 }
 
-message Ref {
-    string label = 1;
-    uint64 ref_seq = 2;
-    bytes commit_id = 3;
+message MetricResponse {
+    string message = 999;
+
 }
-
-message Commit {
-    LogProtocolVersion protocol_version = 1;
-    LogProtocolVersion min_reader_version = 2;
-    LogProtocolVersion min_writer_version = 3;
-    bytes commit_id = 4;
-    bytes parent_id = 5;
-
-    // monotonicly increasing table version for this update
-    uint64 table_version = 6;
-
-    // timestamp commit was created
-    uint64 timestamp = 7;
-
-    // commit -> [tile -> [files]]
-    repeated TileFiles tile_files = 8;
-
-    // Columns updated in this commit
-    repeated string columns = 9;
-
-    // SQL expression to use to merge each column in this commit
-    map<string, string> expression_map = 10;
+service Porta {
+    rpc GetMetrics (MetricRequest) returns (MetricResponse);
 }
-
-message TileFiles {
-    Tile tile = 1;
-    // path to parquet object files for this update
-    repeated File file = 2;
-}
-enum FileType {
-    Data = 0;
-    Blob = 1;
-}
-
-message File {
-    string file_path = 2;
-    FileType file_type = 3;
-    uint64 file_size = 4;
-    uint64 update_time = 5;
-}
-
-message Checkpoint {
-    bytes commit_id = 1;
-
-    // timestamp checkpoint was created
-    uint64 timestamp = 2;
-
-    // checkpoint -> [tile -> [files]]
-    repeated TileFiles tile_files = 8;
-
-    File metadata_objects = 4;
-}
-
-message PartitionValue {
-    oneof value {
-        string string_value = 1;
-        uint64 uint64_value = 2;
-        int64 int64_value = 3;
-        double double_value = 4;
-        bool bool_value = 5;
-    }
-}
-
-message Tile {
-    repeated PartitionValue partition_key = 1;
-    string column_group = 2;
-}
-
-message KeyHashPartition {
-    repeated string partition_keys = 1;
-    uint64 num_partitions = 2;
-}
-
-message WindowPartition {
-    string partition_key = 1;
-    uint64 window_size = 2;
-}
-
-message ColumnGroupMetadata {
-    string column_group = 1;
-    repeated string id_columns = 2;
-
-    oneof partition_spec {
-        KeyHashPartition key_hash = 3;
-        WindowPartition window = 4;
-    }
-}
-
-message ColumnMetadata {
-    string column = 1;
-    string column_group = 2;
-}
-
-
-
 
 
