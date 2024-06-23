@@ -2,14 +2,55 @@ syntax = "proto3";
 
 package porta_api;
 
+message Metric {
+
+    string suri = 1;
+    string name = 2;
+    string description = 3;
+    string unit = 4;
+
+    oneof data {
+        Gauge gauge = 5;
+    }
+}
+
+message Gauge {
+    repeated NumberDataPoint data_points = 1;
+}
+
+message NumberDataPoint {
+    // StartTimeUnixNano is optional but strongly encouraged, see the
+    // the detailed comments above Metric.
+    //
+    // Value is UNIX Epoch time in nanoseconds since 00:00:00 UTC on 1 January
+    // 1970.
+    fixed64 start_time_unix_nano = 2;
+  
+    // TimeUnixNano is required, see the detailed comments above Metric.
+    //
+    // Value is UNIX Epoch time in nanoseconds since 00:00:00 UTC on 1 January
+    // 1970.
+    fixed64 time_unix_nano = 3;
+  
+    // The value itself.  A point is considered invalid when one of the recognized
+    // value fields is not present inside this oneof.
+    oneof value {
+      double as_double = 4;
+      sfixed64 as_int = 6;
+    }
+}
+  
+
 message MetricRequest {
-    string metric_suri = 1;
+    repeated string metric_suri = 1;
+
+    fixed64 start_time_unix_nano = 2;
 }
 
 message MetricResponse {
-    string message = 999;
-
+    repeated Metric metric = 1;
 }
+
 service Porta {
     rpc GetMetrics (MetricRequest) returns (MetricResponse);
 }
