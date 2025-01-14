@@ -1,8 +1,6 @@
 use crate::porta_api::NumberDataPoint;
 use crate::porta_api::number_data_point::Value;
 
-pub(crate) mod auto;
-
 pub(crate) fn format_datapoint(val: &NumberDataPoint) -> String {
     
     match val.value {

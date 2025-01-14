@@ -34,10 +34,11 @@ fn cli() -> Command {
 
 async fn handle_view(metric_suris:&Vec<&String>) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = PortaClient::connect("http://[::1]:50051").await?;
+    let width = termsize::get().map(|size| size.cols).unwrap_or(80) as u32;
 
     println!(
-        "Viewing {:?}",
-        metric_suris
+        "Viewing {:?} @ {}",
+        metric_suris, width
     );
 
     let request = tonic::Request::new(MetricRequest {
@@ -67,11 +68,9 @@ async fn handle_view(metric_suris:&Vec<&String>) -> Result<(), Box<dyn std::erro
                 let end = xy_pairs.last().unwrap().0;
                 
                 let lines = Shape::Lines(&xy_pairs);
-                Chart::new(120, 60, start, end)
+                Chart::new(width, 60, start, end)
                     .linecolorplot(&lines, RED)
                     .display();
-
-                println!("{}", format_metric(&guage.data_points));
             }
             _ => {}
         }        
