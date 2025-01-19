@@ -1,5 +1,7 @@
-# Standard library imports
 import os
+os.environ['XLA_FLAGS'] = '--xla_gpu_cuda_data_dir="/home/sublogical/.miniconda3/envs/tf-gpu-3.12"'
+
+# Standard library imports
 import math
 import argparse
 from typing import Any, Callable, NamedTuple, Tuple
@@ -7,12 +9,13 @@ from typing import Any, Callable, NamedTuple, Tuple
 # JAX and related libraries
 import jax
 import jax.numpy as jnp
-import optax
+from orbax import checkpoint as ocp
 from flax.training import train_state
+from orbax.checkpoint import checkpoint_utils
 
 # Data processing and ML libraries
 import numpy as np
-import tensorflow as tf
+
 from torch.utils.data import DataLoader
 from datasets import load_dataset
 
@@ -20,6 +23,12 @@ from datasets import load_dataset
 from model import Transformer
 from trainer import Trainer
 
+jax.config.update('jax_default_matmul_precision', 'high')
+
+from tokenizers import Tokenizer
+from tokenizers.models import BPE
+from tokenizers.trainers import BpeTrainer
+from tokenizers.pre_tokenizers import Whitespace
 
 class ModelConfig(NamedTuple):
     vocab_size: int
@@ -87,12 +96,42 @@ MODEL_CONFIGS = {
         dropout_rate=0.1,
         batch_size=2
     ),
-    "base": ModelConfig(
+    "s": ModelConfig(
         vocab_size=50000,
         num_layers=12,
         num_heads=12,
         head_dim=64,
         mlp_dim=2048,
+        max_seq_len=2048,
+        dropout_rate=0.1,
+        batch_size=1
+    ),
+    "m": ModelConfig(
+        vocab_size=50000,
+        num_layers=24,
+        num_heads=16,
+        head_dim=64,
+        mlp_dim=4096,
+        max_seq_len=2048,
+        dropout_rate=0.1,
+        batch_size=1
+    ),
+    "l": ModelConfig(
+        vocab_size=50000,
+        num_layers=32,
+        num_heads=24,
+        head_dim=96,
+        mlp_dim=8192,
+        max_seq_len=2048,
+        dropout_rate=0.1,
+        batch_size=1
+    ),
+    "xl": ModelConfig(
+        vocab_size=50000,
+        num_layers=48,
+        num_heads=32,
+        head_dim=128,
+        mlp_dim=16384,
         max_seq_len=2048,
         dropout_rate=0.1,
         batch_size=1
@@ -105,14 +144,26 @@ def create_data_loader(config: ModelConfig, split: str = "train", max_samples: i
     if max_samples:
         dataset = dataset.select(range(max_samples))
 
-    # Load tokenizer
-    tokenizer = tf.keras.preprocessing.text.Tokenizer(num_words=config.vocab_size)
-    tokenizer.fit_on_texts([text for text in dataset["text"] if text.strip()])
+    # Initialize and train tokenizer
+    tokenizer = Tokenizer(BPE(unk_token="[UNK]"))
+    tokenizer.pre_tokenizer = Whitespace()
+    trainer = BpeTrainer(
+        vocab_size=config.vocab_size,
+        special_tokens=["[UNK]", "[PAD]"],
+    )
+    
+    # Train the tokenizer
+    tokenizer.train_from_iterator(
+        [text for text in dataset["text"] if text.strip()],
+        trainer=trainer
+    )
 
     def tokenize_and_chunk(text):
         if not text.strip():
             return None
-        tokens = tokenizer.texts_to_sequences([text])[0]
+        # Encode the text to token IDs
+        encoded = tokenizer.encode(text)
+        tokens = encoded.ids
         if len(tokens) < 2:  # Skip very short sequences
             return None
         
@@ -125,7 +176,7 @@ def create_data_loader(config: ModelConfig, split: str = "train", max_samples: i
             chunk = tokens[i:i + config.max_seq_len]
             # Pad if necessary
             if len(chunk) < config.max_seq_len:
-                chunk = chunk + [0] * (config.max_seq_len - len(chunk))
+                chunk = chunk + [1] * (config.max_seq_len - len(chunk))  # 1 is [PAD] token
             chunks.append(chunk)
         
         return chunks if chunks else None
@@ -159,36 +210,6 @@ def create_data_loader(config: ModelConfig, split: str = "train", max_samples: i
     dataset = TextDataset(inputs, labels)
     return DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
 
-def train_epoch(state, dataloader, epoch, rng) -> Tuple[train_state.TrainState, jax.random.PRNGKey, dict]:
-    """Train for one epoch"""
-    metrics = []
-    for batch_idx, (inputs, labels) in enumerate(dataloader):
-        inputs = jnp.array(inputs)
-        labels = jnp.array(labels)
-        state, rng, batch_metrics = Trainer.train_step(state, (inputs, labels), rng)
-        metrics.append(batch_metrics)
-        
-        if batch_idx % 100 == 0:
-            avg_metrics = {k: float(np.mean([m[k] for m in metrics])) for k in metrics[0].keys()}
-            print(f"Epoch {epoch}, Batch {batch_idx}: {avg_metrics}")
-    
-    return state, rng, metrics
-
-def eval_epoch(state, dataloader, epoch, rng) -> Tuple[jax.random.PRNGKey, dict]:
-    """Evaluate for one epoch"""
-    metrics = []
-    for batch_idx, (inputs, labels) in enumerate(dataloader):
-        inputs = jnp.array(inputs)
-        labels = jnp.array(labels)
-        rng, batch_metrics = Trainer.eval_step(state, (inputs, labels), rng)
-        metrics.append(batch_metrics)
-        
-        if batch_idx % 100 == 0:
-            avg_metrics = {k: float(np.mean([m[k] for m in metrics])) for k in metrics[0].keys()}
-            print(f"Eval Epoch {epoch}, Batch {batch_idx}: {avg_metrics}")
-    
-    return rng, metrics
-
 def main():
     parser = argparse.ArgumentParser(description='Train a transformer model')
     parser.add_argument('--model-size', type=str, default='xxs',
@@ -202,6 +223,14 @@ def main():
                       help='Number of epochs to train')
     parser.add_argument('--max-samples', type=int, default=None,
                       help='Maximum number of samples to use (for testing)')
+    parser.add_argument('--checkpoint-dir', type=str, default='checkpoints',
+                      help='Directory to save checkpoints')
+    parser.add_argument('--resume-checkpoint', type=str, default=None,
+                      help='Specific checkpoint step to resume from (default: latest)')
+    parser.add_argument('--max-checkpoints', type=int, default=3,
+                      help='Maximum number of checkpoints to keep')
+    parser.add_argument('--checkpoint-interval', type=int, default=2,
+                      help='Save checkpoint every N steps')
     args = parser.parse_args()
 
     # Get model configuration
@@ -225,33 +254,78 @@ def main():
     trainer = Trainer(
         model=model,
         learning_rate=args.learning_rate,
-        weight_decay=args.weight_decay
+        weight_decay=args.weight_decay,
+        rng = jax.random.PRNGKey(0),
+        input_shape = (config.batch_size, config.max_seq_len)
     )
 
-    # Initialize training state
-    rng = jax.random.PRNGKey(0)
-    input_shape = (config.batch_size, config.max_seq_len)
-    state, rng = trainer.create_train_state(rng, input_shape)
+    # Initialize checkpoint manager
+    options = ocp.CheckpointManagerOptions(
+        max_to_keep=args.max_checkpoints, 
+        save_interval_steps=args.checkpoint_interval
+    )
+    mngr = ocp.CheckpointManager(
+        args.checkpoint_dir, options=options, item_names=('state', 'epoch_metrics')
+    )
 
-    print(f"Model initialized with {sum(x.size for x in jax.tree_util.tree_leaves(state.params)):,} parameters")
+    start_epoch = 0
+    loaded_metrics = None
+
+    if args.resume_checkpoint == "latest":
+        start_epoch = mngr.latest_step()
+    elif args.resume_checkpoint is not None:
+        start_epoch = int(args.resume_checkpoint)
+
+    if start_epoch > 0:
+        restored = mngr.restore(start_epoch, args=ocp.args.Composite(
+            state=ocp.args.StandardRestore(trainer.get_abstract_state()),
+            epoch_metrics=ocp.args.JsonRestore(trainer.get_abstract_metrics())
+        ))
+        trainer.restore_state(restored.state)
+
+        print(f"Resumed from epoch {start_epoch}")
+        print(f"Loaded metrics: {restored.epoch_metrics}")
+    else:
+        print("Starting training from scratch")
+
+    print(f"Model initialized with {trainer.count_parameters():,} parameters")
 
     # Create data loaders
     train_loader = create_data_loader(config, "train", args.max_samples)
     val_loader = create_data_loader(config, "validation", args.max_samples)
 
     # Training loop
-    for epoch in range(args.epochs):
+    for epoch in range(start_epoch, args.epochs):
         print(f"\nEpoch {epoch+1}/{args.epochs}")
         
         # Training
-        state, rng, train_metrics = train_epoch(state, train_loader, epoch+1, rng)
+        train_metrics = trainer.train_epoch(train_loader, epoch+1)
         train_metrics = {k: float(np.mean([m[k] for m in train_metrics])) for k in train_metrics[0].keys()}
         print(f"Training metrics: {train_metrics}")
         
         # Validation
-        rng, val_metrics = eval_epoch(state, val_loader, epoch+1, rng)
+        val_metrics = trainer.eval_epoch(val_loader, epoch+1)
         val_metrics = {k: float(np.mean([m[k] for m in val_metrics])) for k in val_metrics[0].keys()}
         print(f"Validation metrics: {val_metrics}")
 
+        # Save checkpoint
+        metrics = {
+            'train': train_metrics,
+            'validation': val_metrics
+        }
+        state_dict = trainer.get_state_dict()
+
+        mngr.save(
+            epoch+1,
+            args=ocp.args.Composite(
+                state=ocp.args.StandardSave(trainer.get_state_dict()),
+                epoch_metrics=ocp.args.JsonSave(metrics),
+            ),
+        )
+        
+    print(f"Waiting for checkpoint manager to finish")
+    mngr.wait_until_finished()
+
 if __name__ == "__main__":
     main() 
+
