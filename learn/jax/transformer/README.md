@@ -1,7 +1,8 @@
 # TODO
 
 - model configuration
-  - refactor model configuration out of learn.py
+  DONE - refactor model configuration out of learn.py
+  - add cli for model configuration inspection
 - dataloader
   - refactor dataloader out of learn.py
   - add support for mixtures in dataloader
@@ -14,21 +15,19 @@
   - add learning rate scheduler
   - add early stopping
   - add support for distributed training
+  - add tensorboard support
 - checkpointing
-  - add basic checkpointing
   - add checkpointing with ranking metrics
   - add checkpointing restore
   - sharded/distributed checkpointing
+  DONE - add basic checkpointing
   DONE - add checkpointing with metrics
   DONE - add checkpointing with optimizer state
 - inference
-  - inference service
-    - gRPC
-    - REST
-    - batch inference
-    - caching
-    - prefix caching
-  - inference client
+  - load checkpoint
+  - inference API
+    - single
+    - batch
 - distributed training
   - dataloader
   - model
