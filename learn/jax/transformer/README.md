@@ -2,7 +2,7 @@
 
 - model configuration
   DONE - refactor model configuration out of learn.py
-  - add cli for model configuration inspection
+  DONE - add cli for model configuration inspection
 - dataloader
   - refactor dataloader out of learn.py
   - add support for mixtures in dataloader

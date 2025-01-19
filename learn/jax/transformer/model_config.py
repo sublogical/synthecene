@@ -34,6 +34,21 @@ class ModelConfig(NamedTuple):
         # Convert to GB (assuming float32)
         return (total_params + activations) * 4 / (1024**3)
 
+    def count_parameters(self) -> int:
+        """Count total number of trainable parameters"""
+        # Embedding parameters
+        embedding_params = self.vocab_size * self.hidden_dim  # Token embeddings
+        embedding_params += self.max_seq_len * self.hidden_dim  # Position embeddings
+        
+        # Per layer parameters
+        attention_params = 4 * (self.hidden_dim * self.hidden_dim)  # Q,K,V, and output projections
+        mlp_params = 2 * (self.hidden_dim * self.mlp_dim)  # Two dense layers
+        layer_norm_params = 4 * self.hidden_dim  # 2 layer norms per block
+        
+        # Total parameters
+        return (embedding_params + 
+                self.num_layers * (attention_params + mlp_params + layer_norm_params))
+
 # Model size configurations
 MODEL_CONFIGS = {
     "nano": ModelConfig(
@@ -107,3 +122,31 @@ MODEL_CONFIGS = {
         batch_size=1
     )
 }
+
+def main():
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Query transformer model configurations')
+    parser.add_argument('model_name', type=str, choices=MODEL_CONFIGS.keys(),
+                      help='Name of the model configuration to query')
+    
+    args = parser.parse_args()
+    
+    config = MODEL_CONFIGS[args.model_name]
+    
+    # Print configuration details
+    print(f"\nConfiguration for model '{args.model_name}':")
+    print("-" * 50)
+    for field in config._fields:
+        value = getattr(config, field)
+        print(f"{field:15} : {value}")
+    
+    print("-" * 50)
+    print(f"hidden_dim       : {config.hidden_dim}")
+    params = config.count_parameters()
+    print(f"Parameters      : {params:,} ({params/1e6:.1f}M)")
+    print(f"Memory Usage    : {config.estimate_memory_usage():.2f} GB")
+
+if __name__ == '__main__':
+    main()
+
