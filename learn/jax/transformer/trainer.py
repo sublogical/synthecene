@@ -143,10 +143,14 @@ class Trainer:
         }
     
     def get_abstract_state(self) -> dict:
-        rng = jax.random.PRNGKey(0),
+        rng = jax.random.PRNGKey(0)
+
+        variables = self.model.init(rng, jnp.ones(self.input_shape, dtype=jnp.int32))
+        params = variables['params']
+
         return {
             'step': 0,
-            'params': self.model.init(rng, jnp.ones(self.input_shape, dtype=jnp.int32)),
+            'params': params,
             'opt_state': self.state.opt_state,
             'rng': rng,
         }
