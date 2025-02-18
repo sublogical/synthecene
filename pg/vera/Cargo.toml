@@ -1,0 +1,26 @@
+[package]
+name = "vera"
+version = "0.1.0"
+edition = "2021"
+resolver = "2"
+
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+prost = "0.12"
+prost-types = "0.12"
+scylla = "0.15"
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tonic = "0.11"
+
+[build-dependencies]
+tonic-build = "0.11"
+
+[[bin]] # Bin to run the Vera gRPC server
+name = "vera-server"
+path = "src/server.rs"
+
+[[bin]] # Bin to run the Vera gRPC client
+name = "vera-client"
+path = "src/client.rs"

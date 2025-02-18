@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package vera_api;
+
+import "google/protobuf/struct.proto";
+
+message Dataspace {
+    string dataspace_id = 1;
+}
+
+message VersionedDocId {
+    // globally unique document identifier
+    string document_id = 1;
+
+    // version identifier based on SHA1 cryptographic hash of document state
+    string version_id = 2;
+}
+message Document {
+    VersionedDocId verioned_document_id = 1;
+    string prior_version = 2;
+    map<string, Property> properties = 3;
+}
+
+message PropertySpec {
+    string property_id = 1;
+    string type_id = 2;
+}
+message Property {
+    PropertySpec spec = 1;
+    repeated PropertyValue value = 3;
+}
+
+message PropertyValue {
+    oneof data {
+        google.protobuf.Value value = 1;
+        Attachment attachment = 2;
+    }
+}
+
+message S3Attachment {
+
+}
+
+message Attachment {
+    oneof file {
+        S3Attachment s3 = 1;
+    }
+}
+
+message ReadDocumentsRequest {
+    repeated VersionedDocId versioned_doc_ids = 1;    
+    repeated PropertySpec property_specs = 2;
+}
+
+message ReadDocumentsResponse {
+
+}
+
+
+message WriteDocumentsRequest {
+
+    repeated WriteDocumentRequest write_docs = 1;    
+}
+
+enum OperationType {
+    Replace = 0;
+    Append = 1;
+    Merge = 2;
+    Remove = 3;
+}
+
+message PropertyUpdate {
+    PropertySpec spec = 1;
+    OperationType operation_type = 2;
+    repeated PropertyValue value = 3;
+}
+
+message WriteDocumentRequest {
+    repeated VersionedDocId versioned_doc_ids = 1;    
+}
+
+message WriteDocumentsResponse {
+
+}
+
+service Vera {
+    rpc Get (ReadDocumentsRequest) returns (ReadDocumentsResponse);
+    rpc Put (WriteDocumentsRequest) returns (WriteDocumentsResponse);
+}
