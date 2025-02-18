@@ -6,8 +6,6 @@ pub mod porta_api {
 
 pub(crate) mod metrics;
 
-use metrics::format_metric;
-
 use porta_api::porta_client::PortaClient;
 use porta_api::MetricRequest;
 use porta_api::number_data_point::Value;

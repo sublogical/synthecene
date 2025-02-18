@@ -1,16 +1,13 @@
 pub mod porta_api {
     tonic::include_proto!("porta_api"); // The string specified here must match the proto package name
 }
-pub(crate) mod generators
-pub(crate) mod metrics;
+pub(crate) mod generators;
 
 use generators::auto::sine_wave_metric;
-use metrics::format_metric;
 use porta_api::porta_server::{ Porta, PortaServer };
 use porta_api::{ Gauge, MetricRequest, MetricResponse, Metric };
 
 use tonic::{transport::Server, Request, Response, Status};
-use yansi::{Paint, Style, Color::*};
 
 #[derive(Debug, Default)]
 pub struct PortaService {}
