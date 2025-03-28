@@ -3,19 +3,26 @@ name = "glimmer"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "glimmer-server"
+path = "src/server.rs"
+
+[lib]
+name = "glimmer"
+path = "src/lib.rs"
+
 [dependencies]
+futures = "0.3"
 prost = "0.12"
 prost-types = "0.12"
-tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { version = "1.0", features = ["full"] }
 tokio-stream = { version = "0.1" }
-tonic = "0.11"
+tonic = "0.10"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [build-dependencies]
 tonic-build = "0.11"
-
-[[bin]] # Bin to run the Glimmer gRPC server
-name = "glimmer-server"
-path = "src/server.rs"
 
 [[bin]] # Bin to run the Glimmer gRPC client
 name = "glimmer-client"

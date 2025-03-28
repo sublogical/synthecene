@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = [
+    "pg/glimmer", 
+    "pg/heimdall",
+    "pg/porta",
+    "pg/vera", 
+    "tools/vizzie",
+]

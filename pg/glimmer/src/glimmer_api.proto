@@ -2,67 +2,121 @@ syntax = "proto3";
 
 package glimmer_api;
 
-message NotificationRequest {}
-
-message NotificationResponse {
-    string message = 1;
-    string notification_type = 2;
-    int64 timestamp = 3;
+// Agent management messages
+message Agent {
+    string id = 1;
+    AgentStatus status = 2;
+    map<string, string> properties = 3;
 }
 
-message ContextRequest {
-    string url = 1;
-    string title = 2;
+enum AgentStatus {
+    AGENT_STATUS_UNSPECIFIED = 0;
+    AGENT_STATUS_RUNNING = 1;
+    AGENT_STATUS_PAUSED = 2;
+    AGENT_STATUS_STOPPED = 3;
+}
+
+message CreateAgentRequest {
+    string id = 1;
+}
+
+message GetAgentRequest {
+    string id = 1;
+}
+
+message DeleteAgentRequest {
+    string id = 1;
+}
+
+// Property management messages
+message GetPropertiesRequest {
+    string agent_id = 1;
+}
+
+message GetPropertyRequest {
+    string agent_id = 1;
+    string key = 2;
+}
+
+message SetPropertyRequest {
+    string agent_id = 1;
+    string key = 2;
+    string value = 3;
+}
+
+message DeletePropertyRequest {
+    string agent_id = 1;
+    string key = 2;
+}
+
+// Lifecycle management messages
+message AgentLifecycleRequest {
+    string agent_id = 1;
+}
+
+// Channel management messages
+message CreateChannelRequest {
+    string agent_id = 1;
+    string channel_id = 2;
+}
+
+message GetChannelRequest {
+    string agent_id = 1;
+    string channel_id = 2;
+}
+
+message DeleteChannelRequest {
+    string agent_id = 1;
+    string channel_id = 2;
+}
+
+message ChannelMessage {
+    string agent_id = 1;
+    string channel_id = 2;
     string content = 3;
     int64 timestamp = 4;
 }
 
-message ContextResponse {
+// Common response messages
+message AgentResponse {
     bool success = 1;
     string message = 2;
+    Agent agent = 3;
 }
 
-message ChannelRequest {
-}
-
-message ChannelMessage {
-    string channel_id = 1;
-    string content = 2;
-    int64 timestamp = 3;
-    string sender_id = 4;
-    MessageType type = 5;
+message PropertyResponse {
+    bool success = 1;
+    string message = 2;
+    map<string, string> properties = 3;
 }
 
 message ChannelResponse {
-    string channel_id = 1;
-    ResponseType type = 2;
-    string message = 3;
-    int64 timestamp = 4;
+    bool success = 1;
+    string message = 2;
+    string channel_id = 3;
 }
-
-enum MessageType {
-    MESSAGE_TYPE_UNSPECIFIED = 0;
-    MESSAGE_TYPE_JOIN = 1;
-    MESSAGE_TYPE_LEAVE = 2;
-    MESSAGE_TYPE_CHAT = 3;
-    MESSAGE_TYPE_SYNC = 4;
-}
-
-enum ResponseType {
-    RESPONSE_TYPE_UNSPECIFIED = 0;
-    RESPONSE_TYPE_ACK = 1;
-    RESPONSE_TYPE_ERROR = 2;
-    RESPONSE_TYPE_SYNC = 3;
-} 
 
 service Glimmer {
-    // Stream of notifications from the server to the client
-    rpc GetNotifications (NotificationRequest) returns (stream NotificationResponse) {}
+    // Agent management
+    rpc CreateAgent(CreateAgentRequest) returns (AgentResponse) {}
+    rpc GetAgent(GetAgentRequest) returns (AgentResponse) {}
+    rpc DeleteAgent(DeleteAgentRequest) returns (AgentResponse) {}
 
-    // Report the current context to the server
-    rpc ReportContext (ContextRequest) returns (ContextResponse) {}
+    // Property management
+    rpc GetProperties(GetPropertiesRequest) returns (PropertyResponse) {}
+    rpc GetProperty(GetPropertyRequest) returns (PropertyResponse) {}
+    rpc SetProperty(SetPropertyRequest) returns (PropertyResponse) {}
+    rpc DeleteProperty(DeletePropertyRequest) returns (PropertyResponse) {}
 
-    // Bidirectional streaming for channel synchronization
-    rpc SyncChannel (stream ChannelMessage) returns (stream ChannelResponse) {}
+    // Lifecycle management
+    rpc StartAgent(AgentLifecycleRequest) returns (AgentResponse) {}
+    rpc PauseAgent(AgentLifecycleRequest) returns (AgentResponse) {}
+    rpc StopAgent(AgentLifecycleRequest) returns (AgentResponse) {}
+
+    // Channel management
+    rpc CreateChannel(CreateChannelRequest) returns (ChannelResponse) {}
+    rpc GetChannel(GetChannelRequest) returns (ChannelResponse) {}
+    rpc DeleteChannel(DeleteChannelRequest) returns (ChannelResponse) {}
+    rpc StreamChannel(GetChannelRequest) returns (stream ChannelMessage) {}
 }
 
