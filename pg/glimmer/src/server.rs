@@ -2,8 +2,11 @@ pub mod glimmer_api {
     tonic::include_proto!("glimmer_api"); // The string specified here must match the proto package name
 }
 
+mod registry;
+
 use glimmer_api::glimmer_server::{ Glimmer, GlimmerServer };
 use glimmer_api::*;
+use glimmer_api::create_agent_request::OptionalTemplate::TemplateUri;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -15,13 +18,20 @@ use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{info, warn, error, instrument};
+use registry::{get_template_by_uri, AgentTemplate};
 
-// In-memory state for our service
+// In-memory state for an agent channel
+#[derive(Debug, Default)]
+struct ChannelState {
+    messages: Vec<ChannelMessage>,
+}
+
+// In-memory state for an agent
 #[derive(Debug, Default)]
 struct AgentState {
     properties: HashMap<String, String>,
     status: i32, // Maps to AgentStatus enum
-    channels: HashMap<String, Vec<ChannelMessage>>,
+    channels: HashMap<String, ChannelState>,
 }
 
 #[derive(Debug, Default)]
@@ -32,22 +42,64 @@ pub struct GlimmerService {
 #[tonic::async_trait]
 impl Glimmer for GlimmerService {
     #[instrument(skip(self))]
+    async fn health_check(
+        &self,
+        _request: Request<HealthCheckRequest>,
+    ) -> Result<Response<HealthCheckResponse>, Status> {
+        info!("Received health check request");
+
+        Ok(Response::new(HealthCheckResponse {
+            status: true,
+            message: "Service is healthy".to_string(),
+        }))
+    }
+
+    #[instrument(skip(self))]
     async fn create_agent(
         &self,
         request: Request<CreateAgentRequest>,
     ) -> Result<Response<AgentResponse>, Status> {
         let req = request.into_inner();
         info!(agent_id = %req.id, "Creating new agent");
-        
+
+        // Retrieve the template if a URI is provided
+        let mut properties = HashMap::new();
+        let mut channels = Vec::<String>::new();
+
+        if let Some(TemplateUri(template_uri)) = req.optional_template {
+            if let Some(template) = get_template_by_uri(&template_uri) {
+                // Use the template's default properties and channels
+                properties.extend(template.default_properties);
+                channels.extend(template.default_channels);
+            } else {
+                return Err(Status::not_found("Template not found"));
+            }
+        }
+
+        // Override properties with any provided in the request
+        for (key, value) in req.override_parameters {
+            properties.insert(key, value);
+        }
+
+        let channels = channels.iter().map(|channel| {
+            (channel.clone(), ChannelState::default())
+        }).collect();
+
+        // Create the agent with the specified properties and channels
         let mut agents = self.agents.write().await;
         if agents.contains_key(&req.id) {
             warn!(agent_id = %req.id, "Agent already exists");
             return Err(Status::already_exists("Agent already exists"));
         }
 
-        agents.insert(req.id.clone(), AgentState::default());
-        info!(agent_id = %req.id, "Agent created successfully");
+        let agent_state = AgentState {
+            properties,
+            status: AgentStatus::Running as i32,
+            channels,
+        };
+        agents.insert(req.id.clone(), agent_state);
 
+        info!(agent_id = %req.id, "Agent created successfully");
         Ok(Response::new(AgentResponse {
             success: true,
             message: "Agent created successfully".to_string(),
@@ -295,7 +347,7 @@ impl Glimmer for GlimmerService {
             return Err(Status::already_exists("Channel already exists"));
         }
 
-        state.channels.insert(req.channel_id.clone(), Vec::new());
+        state.channels.insert(req.channel_id.clone(), ChannelState::default());
 
         Ok(Response::new(ChannelResponse {
             success: true,
@@ -417,32 +469,7 @@ impl Glimmer for GlimmerService {
 
         Ok(Response::new(Box::pin(output_stream)))
     }
-
-    #[instrument(skip(self))]
-    async fn health_check(
-        &self,
-        request: Request<HealthCheckRequest>,
-    ) -> Result<Response<HealthCheckResponse>, Status> {
-        info!("Received health check request");
-
-        // Check if we can access our internal state
-        let agents = self.agents.read().await;
-        if agents.is_err() {
-            return Ok(Response::new(HealthCheckResponse {
-                status: false,
-                message: "Failed to access internal state".to_string(),
-            }));
-        }
-
-        // Could add more health checks here (e.g., database connections, etc.)
-
-        Ok(Response::new(HealthCheckResponse {
-            status: true,
-            message: "Service is healthy".to_string(),
-        }))
-    }
 }
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing

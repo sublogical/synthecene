@@ -59,6 +59,8 @@ enum AgentStatus {
 #[derive(Debug, Deserialize)]
 struct CreateAgentRequest {
     id: String,
+    template_uri: Option<String>,
+    override_parameters: HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -326,7 +328,7 @@ async fn create_agent(
     Json(payload): Json<CreateAgentRequest>,
 ) -> Response {
     Response::with_grpc_conn(&state.pool, |mut conn| async move {
-        let response = conn.create_agent(payload.id).await.map_err(GrpcError::from)?;
+        let response = conn.create_agent(payload.id, payload.template_uri, payload.override_parameters).await.map_err(GrpcError::from)?;
         Ok(Json(AgentResponseWrapper::from(response)))
     }).await
 }

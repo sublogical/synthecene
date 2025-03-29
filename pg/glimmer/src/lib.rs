@@ -5,7 +5,14 @@ pub mod glimmer_api {
 use glimmer_api::glimmer_client::GlimmerClient;
 use tonic::transport::Channel;
 use tonic::{Request, Streaming, Status};
-use glimmer_api::{HealthCheckRequest, HealthCheckResponse};
+use std::collections::HashMap;
+use glimmer_api::{
+    AgentResponse,
+    CreateAgentRequest, 
+    create_agent_request::OptionalTemplate::TemplateUri,
+    HealthCheckRequest, 
+    HealthCheckResponse
+};
 
 pub struct GlimmerConnection {
     client: GlimmerClient<Channel>,
@@ -18,8 +25,19 @@ impl GlimmerConnection {
     }
 
     // Agent CRUD operations
-    pub async fn create_agent(&mut self, id: String) -> Result<glimmer_api::AgentResponse, Status> {
-        let request = Request::new(glimmer_api::CreateAgentRequest { id });
+    pub async fn create_agent(
+        &mut self,
+        id: String,
+        template_uri: Option<String>,
+        override_parameters: HashMap<String, String>,
+    ) -> Result<AgentResponse, Status> {
+        let request = Request::new(CreateAgentRequest {
+            id,
+            optional_template: template_uri.map(|uri| {
+                TemplateUri(uri)
+            }),
+            override_parameters,
+        });
         let response = self.client.create_agent(request).await?;
         Ok(response.into_inner())
     }

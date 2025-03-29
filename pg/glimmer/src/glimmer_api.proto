@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package glimmer_api;
 
+import "google/protobuf/struct.proto"; // Import for using map types
+
 // Agent management messages
 message Agent {
     string id = 1;
@@ -18,6 +20,10 @@ enum AgentStatus {
 
 message CreateAgentRequest {
     string id = 1;
+    oneof optional_template {
+        string template_uri = 2;
+    }
+    map<string, string> override_parameters = 3;
 }
 
 message GetAgentRequest {
