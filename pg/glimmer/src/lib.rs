@@ -5,6 +5,7 @@ pub mod glimmer_api {
 use glimmer_api::glimmer_client::GlimmerClient;
 use tonic::transport::Channel;
 use tonic::{Request, Streaming, Status};
+use glimmer_api::{HealthCheckRequest, HealthCheckResponse};
 
 pub struct GlimmerConnection {
     client: GlimmerClient<Channel>,
@@ -142,6 +143,12 @@ impl GlimmerConnection {
             channel_id,
         });
         let response = self.client.stream_channel(request).await?;
+        Ok(response.into_inner())
+    }
+
+    pub async fn health_check(&mut self) -> Result<HealthCheckResponse, Status> {
+        let request = Request::new(HealthCheckRequest {});
+        let response = self.client.health_check(request).await?;
         Ok(response.into_inner())
     }
 

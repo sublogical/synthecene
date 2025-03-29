@@ -417,6 +417,30 @@ impl Glimmer for GlimmerService {
 
         Ok(Response::new(Box::pin(output_stream)))
     }
+
+    #[instrument(skip(self))]
+    async fn health_check(
+        &self,
+        request: Request<HealthCheckRequest>,
+    ) -> Result<Response<HealthCheckResponse>, Status> {
+        info!("Received health check request");
+
+        // Check if we can access our internal state
+        let agents = self.agents.read().await;
+        if agents.is_err() {
+            return Ok(Response::new(HealthCheckResponse {
+                status: false,
+                message: "Failed to access internal state".to_string(),
+            }));
+        }
+
+        // Could add more health checks here (e.g., database connections, etc.)
+
+        Ok(Response::new(HealthCheckResponse {
+            status: true,
+            message: "Service is healthy".to_string(),
+        }))
+    }
 }
 
 #[tokio::main]

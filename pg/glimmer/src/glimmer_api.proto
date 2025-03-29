@@ -96,7 +96,18 @@ message ChannelResponse {
     string channel_id = 3;
 }
 
+message HealthCheckRequest {
+}
+
+message HealthCheckResponse {
+    bool status = 1;
+    string message = 2;
+}
+
 service Glimmer {
+    // Health check
+    rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse) {}
+
     // Agent management
     rpc CreateAgent(CreateAgentRequest) returns (AgentResponse) {}
     rpc GetAgent(GetAgentRequest) returns (AgentResponse) {}
