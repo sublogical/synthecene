@@ -3,7 +3,6 @@ use axum::{
     Router,
     response::sse::{Event, Sse},
     response::IntoResponse,
-    body::Body,
     Json,
     extract::{Path, State},
     http::StatusCode,
@@ -11,15 +10,16 @@ use axum::{
 };
 use futures::stream::{self, Stream};
 use std::convert::Infallible;
-use std::time::Duration;
-use tokio_stream::StreamExt;
-use tokio::time::interval;
 use serde::{Deserialize, Serialize};
 use clap::Parser;
 use std::collections::HashMap;
 use std::sync::Arc;
-use glimmer::GlimmerConnection;
+use glimmer::{ ChannelMessage,GlimmerConnection };
 use tokio::sync::Mutex;
+use deadpool::managed::{Manager, Pool, Metrics, Object};
+use std::future::Future;
+use tonic::{Status, Streaming, transport::Error as TonicError, Code};
+use async_trait::async_trait;
 
 /// Command line arguments
 #[derive(Parser)]
@@ -37,8 +37,8 @@ struct Args {
 #[derive(Serialize)]
 struct HealthResponse {
     status: String,
-    version: &'static str,
-    timestamp: u64,
+    grpc_connection: bool,
+    message: Option<String>,
 }
 
 // Data structures
@@ -63,7 +63,7 @@ struct CreateAgentRequest {
 
 #[derive(Debug, Deserialize)]
 struct ChannelConfig {
-    // Add necessary fields for channel configuration
+    name: String,
 }
 
 // Wrap GlimmerConnection in Arc<Mutex> for shared state
@@ -153,17 +153,118 @@ impl From<glimmer::glimmer_api::ChannelResponse> for ChannelResponseWrapper {
     }
 }
 
+#[derive(Clone)]
+struct GlimmerManager {
+    grpc_address: String,
+}
+
+#[async_trait]
+impl Manager for GlimmerManager {
+    type Type = GlimmerConnection;
+    type Error = tonic::transport::Error;
+
+    async fn create(&self) -> Result<Self::Type, Self::Error> {
+        let grpc_address = self.grpc_address.clone();
+        let conn = GlimmerConnection::connect(&grpc_address).await?;
+        Ok(conn)
+    }
+
+    async fn recycle(
+        &self,
+        conn: &mut Self::Type,
+        _metrics: &Metrics,
+    ) -> deadpool::managed::RecycleResult<Self::Error> {
+        match conn.health_check().await {
+            Ok(_) => Ok(()),
+            Err(_) => Err(deadpool::managed::RecycleError::Message("Connection unhealthy".into()))
+        }
+    }
+}
+
+type GlimmerPool = Pool<GlimmerManager>;
+
+#[derive(Clone)]
+struct AppState {
+    pool: GlimmerPool,
+}
+
+impl AppState {
+    async fn new(grpc_address: String) -> Self {
+        let manager = GlimmerManager { grpc_address };
+        let pool = Pool::builder(manager)
+            .max_size(32)
+            .build()
+            .expect("Failed to create connection pool");
+
+        Self { pool }
+    }
+}
+
+#[derive(Debug)]
+enum GrpcError {
+    Transport(TonicError),
+    Status(Status),
+}
+
+impl From<TonicError> for GrpcError {
+    fn from(err: TonicError) -> Self {
+        GrpcError::Transport(err)
+    }
+}
+
+impl From<Status> for GrpcError {
+    fn from(status: Status) -> Self {
+        GrpcError::Status(status)
+    }
+}
+
+// Helper trait for handling gRPC connections
+trait GrpcHandler {
+    async fn with_grpc_conn<F, Fut, T>(pool: &GlimmerPool, f: F) -> Response
+    where
+        F: FnOnce(Object<GlimmerManager>) -> Fut,
+        Fut: Future<Output = Result<T, GrpcError>>,
+        T: IntoResponse;
+}
+
+// Implement for Response to allow usage in all handlers
+impl GrpcHandler for Response {
+    async fn with_grpc_conn<F, Fut, T>(pool: &GlimmerPool, f: F) -> Response
+    where
+        F: FnOnce(Object<GlimmerManager>) -> Fut,
+        Fut: Future<Output = Result<T, GrpcError>>,
+        T: IntoResponse,
+    {
+        match pool.get().await {
+            Ok(conn) => {
+                match f(conn).await {
+                    Ok(response) => response.into_response(),
+                    Err(e) => match e {
+                        GrpcError::Transport(e) => (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("Transport error: {}", e),
+                        ).into_response(),
+                        GrpcError::Status(s) => (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            s.message().to_string(),
+                        ).into_response(),
+                    }
+                }
+            }
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to get connection: {}", e),
+            ).into_response(),
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
 
-    println!("Connecting to GlimmerService on {:?}", args.grpc_address);
-
-    // Initialize Glimmer client
-    let glimmer = GlimmerConnection::connect(&args.grpc_address)
-        .await
-        .expect("Failed to connect to Glimmer service");
-    let shared_state = Arc::new(Mutex::new(glimmer));
+    // Initialize connection pool
+    let state = AppState::new(args.grpc_address).await;
 
     // Initialize router with shared state
     let app = Router::new()
@@ -186,7 +287,7 @@ async fn main() {
         .route("/agent/:id/channel/:channel", get(get_channel))
         .route("/agent/:id/channel/:channel/stream", get(stream_channel))
         .route("/agent/:id/channel/:channel", delete(delete_channel))
-        .with_state(shared_state);
+        .with_state(state);
 
     // Run server
     let listener = tokio::net::TcpListener::bind(&args.address).await.unwrap();
@@ -195,177 +296,210 @@ async fn main() {
 }
 
 // Basic health check endpoint
-async fn health_check() -> Json<HealthResponse> {
-    let response = HealthResponse {
-        status: "OK".to_string(),
-        version: env!("CARGO_PKG_VERSION"),
-        timestamp: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
-    };
-    
-    Json(response)
+async fn health_check(
+    State(state): State<AppState>,
+) -> Response {
+    Response::with_grpc_conn(&state.pool, |mut conn| async move {
+        match conn.health_check().await {
+            Ok(response) => {
+                Ok(Json(HealthResponse {
+                    status: if response.status { "healthy" } else { "degraded" }.to_string(),
+                    grpc_connection: true,
+                    message: if response.message.is_empty() { None } else { Some(response.message) },
+                }))
+            },
+            Err(e) => {
+                Ok(Json(HealthResponse {
+                    status: "degraded".to_string(),
+                    grpc_connection: false,
+                    message: Some(format!("gRPC error: {}", e)),
+                }))
+            }
+        }
+    })
+    .await
 }
 
 // Handler functions
 async fn create_agent(
-    State(state): State<SharedState>,
+    State(state): State<AppState>,
     Json(payload): Json<CreateAgentRequest>,
-) -> impl IntoResponse {
-    let mut client = state.lock().await;
-    match client.create_agent(payload.id).await {
-        Ok(response) => {
-            Json(AgentResponseWrapper::from(response)).into_response()
-        },
-        Err(status) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, status.message().to_string()).into_response()
-        }
-    }
+) -> Response {
+    Response::with_grpc_conn(&state.pool, |mut conn| async move {
+        let response = conn.create_agent(payload.id).await.map_err(GrpcError::from)?;
+        Ok(Json(AgentResponseWrapper::from(response)))
+    }).await
 }
 
 async fn get_agent(
-    State(state): State<SharedState>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
-) -> impl IntoResponse {
-    let mut client = state.lock().await;
-    match client.get_agent(id).await {
-        Ok(response) => {
-            Json(AgentResponseWrapper::from(response)).into_response()
-        },
-        Err(status) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, status.message().to_string()).into_response()
-        }
-    }
+) -> Response {
+    Response::with_grpc_conn(&state.pool, |mut conn| async move {
+        let response = conn.get_agent(id).await.map_err(GrpcError::from)?;
+        Ok(Json(AgentResponseWrapper::from(response)))
+    }).await
 }
 
 async fn delete_agent(
-    State(_state): State<SharedState>,
-    Path(_id): Path<String>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
 ) -> Response {
-    // Delete agent logic
-    todo!()
+    Response::with_grpc_conn(&state.pool, |mut conn| async move {
+        conn.delete_agent(id).await.map_err(GrpcError::from)?;
+        Ok(StatusCode::NO_CONTENT)
+    }).await
 }
 
 async fn get_properties(
-    State(_state): State<SharedState>,
-    Path(_id): Path<String>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
 ) -> Response {
-    // Get all properties
-    todo!()
+    Response::with_grpc_conn(&state.pool, |mut conn| async move {
+        let properties = conn.get_properties(id).await.map_err(GrpcError::from)?;
+        let response = PropertyResponseWrapper {
+            success: true,
+            message: "Properties retrieved successfully".to_string(),
+            properties: properties.properties,
+        };
+        Ok(Json(response))
+    }).await
 }
 
 async fn get_property(
-    State(_state): State<SharedState>,
-    Path((_id, _key)): Path<(String, String)>,
+    State(state): State<AppState>,
+    Path((id, key)): Path<(String, String)>,
 ) -> Response {
-    // Get specific property
-    todo!()
+    Response::with_grpc_conn(&state.pool, |mut conn| async move {
+        let property = conn.get_property(id, key.clone()).await.map_err(GrpcError::from)?;
+        let mut properties = HashMap::new();
+        properties.insert(key, property.properties.get("value").unwrap_or(&String::new()).clone());
+        let response = PropertyResponseWrapper {
+            success: true,
+            message: "Property retrieved successfully".to_string(),
+            properties,
+        };
+        Ok(Json(response))
+    }).await
 }
 
 async fn set_property(
-    State(state): State<SharedState>,
+    State(state): State<AppState>,
     Path((id, key)): Path<(String, String)>,
     Json(value): Json<String>,
-) -> impl IntoResponse {
-    let mut client = state.lock().await;
-    match client.set_property(id, key, value).await {
-        Ok(response) => {
-            Json(PropertyResponseWrapper::from(response)).into_response()
-        },
-        Err(status) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, status.message().to_string()).into_response()
-        }
-    }
+) -> Response {
+    Response::with_grpc_conn(&state.pool, |mut conn| async move {
+        let response = conn.set_property(id, key, value).await.map_err(GrpcError::from)?;
+        Ok(Json(PropertyResponseWrapper::from(response)))
+    }).await
 }
 
 async fn delete_property(
-    State(_state): State<SharedState>,
-    Path((_id, _key)): Path<(String, String)>,
+    State(state): State<AppState>,
+    Path((id, key)): Path<(String, String)>,
 ) -> Response {
-    // Delete property
-    todo!()
+    Response::with_grpc_conn(&state.pool, |mut conn| async move {
+        conn.delete_property(id, key).await.map_err(GrpcError::from)?;
+        Ok(StatusCode::NO_CONTENT)
+    }).await
 }
 
 async fn start_agent(
-    State(_state): State<SharedState>,
-    Path(_id): Path<String>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
 ) -> Response {
-    // Start agent logic
-    todo!()
+    Response::with_grpc_conn(&state.pool, |mut conn| async move {
+        conn.start_agent(id).await.map_err(GrpcError::from)?;
+        Ok(StatusCode::NO_CONTENT)
+    }).await
 }
 
 async fn pause_agent(
-    State(_state): State<SharedState>,
-    Path(_id): Path<String>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
 ) -> Response {
-    // Pause agent logic
-    todo!()
+    Response::with_grpc_conn(&state.pool, |mut conn| async move {
+        conn.pause_agent(id).await.map_err(GrpcError::from)?;
+        Ok(StatusCode::NO_CONTENT)
+    }).await
 }
 
 async fn stop_agent(
-    State(_state): State<SharedState>,
-    Path(_id): Path<String>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
 ) -> Response {
-    // Stop agent logic
-    todo!()
+    Response::with_grpc_conn(&state.pool, |mut conn| async move {
+        conn.stop_agent(id).await.map_err(GrpcError::from)?;
+        Ok(StatusCode::NO_CONTENT)
+    }).await
 }
 
 async fn create_channel(
-    State(_state): State<SharedState>,
-    Path(_id): Path<String>,
-    Json(_channel_config): Json<ChannelConfig>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(channel_config): Json<ChannelConfig>,
 ) -> Response {
-    // Create channel logic
-    todo!()
+    Response::with_grpc_conn(&state.pool, |mut conn| async move {
+        let response = conn.create_channel(id, channel_config.name).await.map_err(GrpcError::from)?;
+        Ok(Json(ChannelResponseWrapper::from(response)))
+    }).await
 }
 
 async fn get_channel(
-    State(_state): State<SharedState>,
-    Path((_id, _channel)): Path<(String, String)>,
+    State(state): State<AppState>,
+    Path((id, channel)): Path<(String, String)>,
 ) -> Response {
-    // Get channel details
-    todo!()
+    Response::with_grpc_conn(&state.pool, |mut conn| async move {
+        let response = conn.get_channel(id, channel).await.map_err(GrpcError::from)?;
+        Ok(Json(ChannelResponseWrapper::from(response)))
+    }).await
 }
 
 async fn stream_channel(
-    State(state): State<SharedState>,
+    State(state): State<AppState>,
     Path((id, channel)): Path<(String, String)>,
-) -> impl IntoResponse {
-    let mut client = state.lock().await;
-    
-    match client.stream_channel(id, channel).await {
-        Ok(mut stream) => {
-            // Convert gRPC stream to SSE
-            let stream = async_stream::stream! {
-                while let Some(result) = stream.message().await.transpose() {
-                    match result {
-                        Ok(msg) => {
-                            yield Ok::<_, Infallible>(Event::default()
-                                .data(serde_json::to_string(&ChannelMessageWrapper::from(msg)).unwrap())
-                                .event("message"))
-                        }
-                        Err(e) => {
-                            yield Ok::<_, Infallible>(Event::default()
-                                .data(format!("Error: {}", e))
-                                .event("error"))
-                        }
-                    }
+) -> Response {
+    Response::with_grpc_conn(&state.pool, |mut conn| async move {
+        let stream = conn.stream_channel(id.clone(), channel.clone()).await.map_err(GrpcError::from)?;
+        Ok(handle_channel_stream(stream, id, channel))
+    }).await
+}
+
+// Helper function for stream handling
+fn handle_channel_stream(
+    mut stream: Streaming<ChannelMessage>,
+    _id: String,
+    _channel: String,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let stream = async_stream::stream! {
+        while let Some(result) = stream.message().await.transpose() {
+            match result {
+                Ok(msg) => {
+                    yield Ok(Event::default()
+                        .data(serde_json::to_string(&ChannelMessageWrapper::from(msg)).unwrap())
+                        .event("message"))
                 }
-            };
-            
-            Sse::new(stream).into_response()
-        },
-        Err(status) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, status.message().to_string()).into_response()
+                Err(e) => {
+                    yield Ok(Event::default()
+                        .data(format!("Error: {}", e))
+                        .event("error"));
+
+                    // TODO: Try to reconnect
+                    break;
+                }
+            }
         }
-    }
+    };
+    
+    Sse::new(stream)
 }
 
 async fn delete_channel(
-    State(_state): State<SharedState>,
-    Path((_id, _channel)): Path<(String, String)>,
+    State(state): State<AppState>,
+    Path((id, channel)): Path<(String, String)>,
 ) -> Response {
-    // Delete channel logic
-    todo!()
+    Response::with_grpc_conn(&state.pool, |mut conn| async move {
+        conn.delete_channel(id, channel).await.map_err(GrpcError::from)?;
+        Ok(StatusCode::NO_CONTENT)
+    }).await
 }
