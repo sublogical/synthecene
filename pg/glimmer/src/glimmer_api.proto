@@ -26,6 +26,13 @@ message CreateAgentRequest {
     map<string, string> override_parameters = 3;
 }
 
+message ListAgentsRequest {
+}
+
+message ListAgentsResponse {
+    repeated Agent agents = 1;
+}
+
 message GetAgentRequest {
     string id = 1;
 }
@@ -116,6 +123,7 @@ service Glimmer {
 
     // Agent management
     rpc CreateAgent(CreateAgentRequest) returns (AgentResponse) {}
+    rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse) {}
     rpc GetAgent(GetAgentRequest) returns (AgentResponse) {}
     rpc DeleteAgent(DeleteAgentRequest) returns (AgentResponse) {}
 

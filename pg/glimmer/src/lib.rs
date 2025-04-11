@@ -14,6 +14,13 @@ use glimmer_api::{
     HealthCheckResponse
 };
 
+// Re-export common types for convenience
+pub use glimmer_api::{
+    Agent, 
+    AgentStatus, 
+    ChannelMessage
+}; 
+
 pub struct GlimmerConnection {
     client: GlimmerClient<Channel>,
 }
@@ -172,6 +179,3 @@ impl GlimmerConnection {
 
     // ... rest of the client methods ...
 }
-
-// Re-export common types for convenience
-pub use glimmer_api::{Agent, AgentStatus, ChannelMessage}; 

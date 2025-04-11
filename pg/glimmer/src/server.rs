@@ -112,6 +112,16 @@ impl Glimmer for GlimmerService {
     }
 
     #[instrument(skip(self))]
+    async fn list_agents(
+        &self,
+        _request: Request<ListAgentsRequest>,
+    ) -> Result<Response<ListAgentsResponse>, Status> {
+        let agents = self.agents.read().await;
+        let agents = agents.values().map(|agent| agent.clone()).collect();
+        Ok(Response::new(ListAgentsResponse { agents }))
+    }
+
+    #[instrument(skip(self))]
     async fn get_agent(
         &self,
         request: Request<GetAgentRequest>,
