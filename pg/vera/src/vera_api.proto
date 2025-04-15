@@ -5,7 +5,9 @@ package vera_api;
 import "google/protobuf/struct.proto";
 
 message Dataspace {
-    string dataspace_id = 1;
+    string universe = 1;
+    string table = 2;
+    string version = 3;
 }
 
 message VersionedDocId {
@@ -32,8 +34,11 @@ message Property {
 
 message PropertyValue {
     oneof data {
-        google.protobuf.Value value = 1;
-        Attachment attachment = 2;
+        string string_value = 1;
+        int64 int64_value = 2;
+        double double_value = 3;
+        google.protobuf.Value proto_value = 4;
+        Attachment attachment = 5;
     }
 }
 
@@ -48,18 +53,23 @@ message Attachment {
 }
 
 message ReadDocumentsRequest {
-    repeated VersionedDocId versioned_doc_ids = 1;    
-    repeated PropertySpec property_specs = 2;
+    Dataspace dataspace = 1;
+    repeated VersionedDocId versioned_doc_ids = 2;    
+    repeated PropertySpec property_specs = 3;
 }
 
 message ReadDocumentsResponse {
-
+    repeated ReadDocumentResponse read_documents = 1;
 }
 
+message ReadDocumentResponse {
+    VersionedDocId versioned_doc_ids = 1; 
+    repeated Property properties = 2;
+}
 
 message WriteDocumentsRequest {
-
-    repeated WriteDocumentRequest write_docs = 1;    
+    Dataspace dataspace = 1;
+    repeated WriteDocumentRequest write_docs = 2;    
 }
 
 enum OperationType {
@@ -76,7 +86,8 @@ message PropertyUpdate {
 }
 
 message WriteDocumentRequest {
-    repeated VersionedDocId versioned_doc_ids = 1;    
+    VersionedDocId versioned_doc_id = 1;
+    repeated PropertyUpdate property_updates = 2;
 }
 
 message WriteDocumentsResponse {
