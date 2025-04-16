@@ -19,12 +19,13 @@
 - tokenizer
   - refactor tokenizer out of learn.py
   - support precomputing tokenizer
-- model
-  - distributed compute
+- RL
+  - PPO
+  - group relative policy optimization
 - training loop
   - add learning rate scheduler
   - add early stopping
-  - add support for distributed training
+  - add parameter freezing
   - add tensorboard support
 - inference
   - load checkpoint
@@ -37,5 +38,6 @@
   - training loop
   - checkpointing
   - model configuration
-  DONE - refactor model configuration out of learn.py
+- model
   DONE - add cli for model configuration inspection
+  DONE - refactor model configuration out of learn.py

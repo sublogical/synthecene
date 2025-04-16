@@ -1,3 +1,14 @@
+# TODO List
+
+* transformer
+  * refactor model configuration out of learn.py
+  * refactor dataloader out of learn.py
+  * add support for mixtures in dataloader
+  * implement inference
+* proximal policy optimization
+
+
+
 
 
 
