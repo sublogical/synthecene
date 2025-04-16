@@ -1,0 +1,18 @@
+services:
+  scylla-db:
+    container_name: scylla
+    image: scylladb/scylla
+    restart: always
+    networks:
+      - backend
+  redis:
+    container_name: redis
+    image: "redis:alpine"
+    restart: always
+    networks:
+      - backend
+
+networks:
+  backend:
+    # Specify driver options
+    driver: bridge
