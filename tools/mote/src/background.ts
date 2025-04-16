@@ -1,12 +1,13 @@
-import * as grpc from '@grpc/grpc-js';
+var global = globalThis; //<- this should be enough
 
-import { GlimmerClient } from './proto/glimmer_api_grpc_pb';
+import { GrpcWebClientBase } from 'grpc-web';
+import { GlimmerClient } from '../proto-generated/glimmer_api_grpc_web_pb';
 import { 
     NotificationRequest,
     NotificationResponse,
     ContextRequest,
     ContextResponse,
-} from './proto/glimmer_api_pb';
+} from '../proto-generated/glimmer_api_pb';
 
 interface Notification {
     message: string;
@@ -49,11 +50,11 @@ class RemoteAgent {
     public readonly onNotification = new EventBroker<NotificationListener>();
 
     constructor(serverUrl: string) {
-        this.client = new GlimmerClient(
-            serverUrl,
-            grpc.credentials.createInsecure()  // Use createSsl() for production
-        );
+        this.client = new GlimmerClient(serverUrl, null, { "useFetchDownloadStream": true });
 
+/**
+
+        this.reportContext("HI", "HI", "HI");
         // Set up notification stream
         const notificationRequest = new NotificationRequest();
         const stream = this.client.getNotifications(notificationRequest);
@@ -65,6 +66,7 @@ class RemoteAgent {
         stream.on('error', (error: Error) => {
             console.error('GRPC stream error:', error);
         });
+         */
     }
 
     protected emitNotification(notification: NotificationResponse): void {
@@ -80,8 +82,8 @@ class RemoteAgent {
 
         return new Promise((resolve, reject) => {
             this.client.reportContext(
-                request,
-                (error: grpc.ServiceError | null, response: ContextResponse) => {
+                request, {},
+                (error: any | null, response: ContextResponse) => {
                     if (error) {
                         reject(error);
                     } else {
@@ -93,10 +95,47 @@ class RemoteAgent {
     }
 }
 
-chrome.runtime.onInstalled.addListener(() => {
-    const agent = new RemoteAgent('localhost:1234');
+import XMLHttpRequestPolyfill from 'sw-xhr';
 
-    console.log("Mote Installed");
+function getData(url: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      console.log("loading");
+      const xhr = new XMLHttpRequestPolyfill();
+      console.log("loaded");
+  
+      xhr.onload = () => {
+        console.log("ONLOAD");
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(xhr.responseText);
+        } else {
+          reject(new Error(`Request failed with status ${xhr.status}`));
+        }
+      };
+  
+      xhr.onerror = () => {
+        reject(new Error('Network error'));
+      };
+  
+      xhr.open('GET', url);
+      xhr.send();
+    });
+}
+
+chrome.runtime.onInstalled.addListener(() => {
+    const remote_url = 'localhost:1234';
+    console.log(`Mote Starting up, connecting to remote agent at ${remote_url}`);
+    const agent = new RemoteAgent(remote_url);
+
+    // NEXT THING TO TRY
+    console.log('TRYING TO FETCH');
+    fetch('http://localhost:4200/')
+        .then(response => console.log("GOOD FETCH"))
+        .catch(error => console.error('Fetch error:', error));
+
+    console.log('TRYING TO POLYFILL');
+    getData('http://localhost:4200/')
+        .then(response => console.log("GOOD POLYFILL"))
+        .catch(error => console.error('Fetch error:', error));
 
     // Add listener
     agent.onNotification.addListener((notification: NotificationResponse) => {

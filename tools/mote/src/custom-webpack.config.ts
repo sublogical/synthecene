@@ -1,5 +1,6 @@
 import type { Configuration } from 'webpack';
 import webpack from 'webpack';
+import NodePolyfillPlugin from 'node-polyfill-webpack-plugin';
 
 export default {
   entry: { 
@@ -11,26 +12,11 @@ export default {
   optimization: {
     minimize: false,
   },
+  devtool: 'inline-source-map',
   resolve: {
     fallback: {
-      "stream": require.resolve("stream-browserify"),
-      "util": require.resolve("util/"),
-      "zlib": require.resolve("browserify-zlib"),
-      "http2": false,
-      "path": require.resolve("path-browserify"),
-      "assert": require.resolve("assert/"),
-      "os": require.resolve("os-browserify/browser"),
-      "dns": false,
-      "net": false,
-      "tls": false,
-      "fs": false,
-      "url": require.resolve("url/"),
-      "http": require.resolve("stream-http")
+      XMLHttpRequest: require.resolve("sw-xhr"),
     }
   },
-  plugins: [
-    new webpack.ProvidePlugin({
-      "process": 'process/browser',
-    }),
-  ],
+  target: 'web',
 } as Configuration;

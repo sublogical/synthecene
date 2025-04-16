@@ -7,7 +7,24 @@ DONE * update all package versions `npm outdated`
 DONE * get custom-webpack installed 
 DONE * fix size of popup and replace contents
 DONE * get basic background service working
-* finish setting up browser extension https://www.justjeb.com/post/chrome-extension-with-angular-from-zero-to-a-little-hero
+DONE * finish setting up browser extension https://www.justjeb.com/post/chrome-extension-with-angular-from-zero-to-a-little-hero
+
+* debug service worker
+  DONE * demonstrate fetch working to localhost
+  * demonstrate XMLHttpRequest polyfill working to localhost
+  * demonstrate hello world gRPC request
+* agent interface
+  * display popup when receiving notifications 
+  * open agent interface in a tab
+  * agent settings interface
+    * agent URL
+
+* agent backend
+  * open connection to agent at startup
+  * send page open events to agent
+  * support push notifications from agent
+  * support loading agent url from config somehow
+  * 
 
 
 
@@ -22,6 +39,10 @@ Run `ng serve` for a dev server. Navigate to `http://localhost:4200/`. The appli
 ## Code scaffolding
 
 Run `ng generate component component-name` to generate a new component. You can also use `ng generate directive|pipe|service|class|guard|interface|enum|module`.
+
+##
+
+run `npm run generate-proto` to generate protoc scaffolding for running (todo: get rid of this requirement)
 
 ## Build
 
