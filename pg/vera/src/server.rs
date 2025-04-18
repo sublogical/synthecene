@@ -8,15 +8,21 @@ use std::time::Duration;
 
 use vera_api::vera_server::{ Vera, VeraServer };
 use vera_api::{
+    CreateTableRequest,
+    CreateTableResponse,
+    CreateColumnRequest,
+    CreateColumnResponse,
+    DeleteColumnRequest,
+    DeleteColumnResponse,
     ReadDocumentsRequest,
     ReadDocumentsResponse,
     WriteDocumentsRequest, 
     WriteDocumentsResponse,
     DocumentUpdate,
-    PropertyValue,
-    PropertySpec,
+    CellValue,
+    ColumnSpec,
     Dataspace,
-    property_value::Data,
+    cell_value::Data,
 };
 use tonic::{transport::Server, Request, Response, Status};
 use tracing::{info, instrument};
@@ -32,18 +38,22 @@ fn derive_table_name(dataspace: &Dataspace) -> String {
     format!("{}_version_{}", escape_uri(&dataspace.table), escape_uri(&dataspace.version))
 }
 
-fn derive_update_schema(property_specs: &[PropertySpec]) -> String {
+fn derive_update_schema(column_uris: &[String]) -> String {
     let mut schema = String::new();
 
-    // Create a comma-separated list of escaped property IDs
-    let properties: Vec<String> = property_specs
+    // Create a comma-separated list of escaped column URIs
+    let columns: Vec<String> = column_uris
         .iter()
-        .map(|spec| escape_uri(&spec.property_id))
+        .map(|uri| escape_uri(uri))
         .collect();
     
     // Join them with commas and wrap in a single set of parentheses
-    schema.push_str("(doc_id, ");
-    schema.push_str(&properties.join(", "));
+    schema.push('(');
+    schema.push_str("doc_id");
+    if !columns.is_empty() {
+        schema.push_str(", ");
+        schema.push_str(&columns.join(", "));
+    }
     schema.push(')');
 
     schema
@@ -55,23 +65,23 @@ fn derive_update_schema(property_specs: &[PropertySpec]) -> String {
  *
  * E.g. id=VALUES(id), a=VALUES(a), b=VALUES(b), c=VALUES(c)
  */
-fn derive_duplicate_update_schema(property_specs: &[PropertySpec]) -> String {
+fn derive_duplicate_update_schema(column_uris: &[String]) -> String {
     let mut schema = String::new();
 
-    // Create a comma-separated list of escaped property IDs
-    let properties: Vec<String> = property_specs
+    // Create a comma-separated list of escaped column URIs
+    let columns: Vec<String> = column_uris
         .iter()
-        .map(|spec| format!("{c} = VALUES({c})", c = escape_uri(&spec.property_id)))
+        .map(|uri| format!("{c} = VALUES({c})", c = escape_uri(uri)))
         .collect();
 
     schema.push_str("doc_id = VALUES(doc_id), ");
-    schema.push_str(&properties.join(", "));
+    schema.push_str(&columns.join(", "));
 
     schema
 }
 
-fn to_cql_value(value: &PropertyValue) -> String {
-    // todo: add property_spec and validate type vs value
+fn to_cql_value(value: &CellValue) -> String {
+    // todo: add column_spec and validate type vs value
     // todo: add support for set, list and map types
     // todo: add support for append, prepend, add and remove operations on complex types
     match &value.data {
@@ -93,13 +103,13 @@ fn derive_values(document_updates: &[DocumentUpdate]) -> String {
         .iter()
         .map(|update| {
             let mut values = String::new();
-            let property_values: Vec<String> = update.property_values
+            let cell_values: Vec<String> = update.cell_values
                 .iter()
                 .map(|value| to_cql_value(value))
                 .collect();
 
             values.push_str(&format!("({}, ", update.document_id));
-            values.push_str(&property_values.join(", "));
+            values.push_str(&cell_values.join(", "));
             values.push_str(")");
             values
         })
@@ -146,7 +156,7 @@ impl Vera for VeraService {
 
         let keyspace = derive_keyspace(&dataspace);
         let table_name = derive_table_name(&dataspace);
-        let schema = derive_update_schema(&req.property_specs);
+        let schema = derive_update_schema(&req.column_uris);
 
         info!("Writing to table: {:?}.{:?} with schema: {:?}", keyspace, table_name, schema);
 
@@ -168,6 +178,30 @@ impl Vera for VeraService {
 
         info!("Writing to dataspace: {:?}", dataspace);
         todo!("write to cassandra");
+    }
+
+    #[instrument(skip(self))]
+    async fn create_table(
+        &self,
+        _request: Request<CreateTableRequest>,
+    ) -> Result<Response<CreateTableResponse>, Status> {
+        todo!("create table");
+    }
+
+    #[instrument(skip(self))]
+    async fn create_column(
+        &self,
+        _request: Request<CreateColumnRequest>,
+    ) -> Result<Response<CreateColumnResponse>, Status> {
+        todo!("create column");
+    }
+
+    #[instrument(skip(self))]
+    async fn delete_column(
+        &self,
+        _request: Request<DeleteColumnRequest>,
+    ) -> Result<Response<DeleteColumnResponse>, Status> {
+        todo!("delete column");
     }
 }
 
@@ -227,10 +261,10 @@ mod tests {
 
     
 
-    fn make_property_spec(property_id: &str, type_id: &str) -> PropertySpec {
-        PropertySpec {
-            property_id: property_id.to_string(),
-            type_id: type_id.to_string(),
+    fn make_column_spec(column_uri: &str, type_uri: &str) -> ColumnSpec {
+        ColumnSpec {
+            column_uri: column_uri.to_string(),
+            type_uri: type_uri.to_string(),
         }
     }
 
@@ -255,38 +289,39 @@ mod tests {
     }
 
     #[test]
-    fn test_derive_update_schemas() {
-        let property_specs = vec![
-            make_property_spec("/std/text_prompt", "string"),
-            make_property_spec("/std/my_foo", "int"),
-            make_property_spec("/std/my_bar", "float"),
+    fn test_derive_update_schema() {
+        let column_uris = vec![
+            "__std__text_prompt".to_string(),
+            "__std__my_foo".to_string(),
+            "__std__my_bar".to_string(),
         ];
 
-        assert_eq!(derive_update_schema(&property_specs), "(doc_id, __std__text_prompt, __std__my_foo, __std__my_bar)");
-        assert_eq!(derive_duplicate_update_schema(&property_specs), "doc_id = VALUES(doc_id), __std__text_prompt = VALUES(__std__text_prompt), __std__my_foo = VALUES(__std__my_foo), __std__my_bar = VALUES(__std__my_bar)");
+        assert_eq!(
+            derive_update_schema(&column_uris),
+            "(doc_id, __std__text_prompt, __std__my_foo, __std__my_bar)"
+        );
     }
 
-    fn make_document_update(document_id: &str, property_values: Vec<PropertyValue>) -> DocumentUpdate {
+    fn make_document_update(document_id: &str, cell_values: Vec<CellValue>) -> DocumentUpdate {
         DocumentUpdate {
             document_id: document_id.to_string(),
-            property_values: property_values,
+            cell_values: cell_values,
         }
     }
-
-    fn make_string_property_value(value: &str) -> PropertyValue {
-        PropertyValue {
+    fn make_string_cell_value(value: &str) -> CellValue {
+        CellValue {
             data: Some(Data::StringValue(value.to_string())),
         }
     }
 
-    fn make_int_property_value(value: i64) -> PropertyValue {
-        PropertyValue {
+    fn make_int_cell_value(value: i64) -> CellValue {
+        CellValue {
             data: Some(Data::Int64Value(value)),
         }
     }
 
-    fn make_double_property_value(value: f64) -> PropertyValue {
-        PropertyValue {
+    fn make_double_cell_value(value: f64) -> CellValue {
+        CellValue {
             data: Some(Data::DoubleValue(value)),
         }
     }
@@ -295,16 +330,16 @@ mod tests {
     fn test_derive_values() {
         let document_updates = vec![
             make_document_update("1", vec![
-                make_string_property_value("alpha"),
-                make_string_property_value("beta"),
-                make_int_property_value(1),
-                make_double_property_value(2.0),
+                make_string_cell_value("alpha"),
+                make_string_cell_value("beta"),
+                make_int_cell_value(1),
+                make_double_cell_value(2.0),
             ]),
             make_document_update("2", vec![
-                make_string_property_value("delta"),
-                make_string_property_value("epsilon"),
-                make_int_property_value(3),
-                make_double_property_value(4.15),
+                make_string_cell_value("delta"),
+                make_string_cell_value("epsilon"),
+                make_int_cell_value(3),
+                make_double_cell_value(4.15),
             ]),
         ];
 

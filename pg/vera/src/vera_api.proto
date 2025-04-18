@@ -13,19 +13,15 @@
     message Document {
         string document_id = 1;
         string prior_version = 2;
-        map<string, Property> properties = 3;
+        map<string, CellValue> cell_values = 3;
     }
 
-    message PropertySpec {
-        string property_id = 1;
-        string type_id = 2;
-    }
-    message Property {
-        PropertySpec spec = 1;
-        repeated PropertyValue value = 3;
+    message ColumnSpec {
+        string column_uri = 1;
+        string type_uri = 2;
     }
 
-    message PropertyValue {
+    message CellValue {
         oneof data {
             string string_value = 1;
             int64 int64_value = 2;
@@ -45,10 +41,37 @@
         }
     }
 
+    message CreateTableRequest {
+        Dataspace dataspace = 1;
+        string table_uri = 2;
+        repeated ColumnSpec column_specs = 3;
+    }
+
+    message CreateTableResponse {
+    }
+
+    message CreateColumnRequest {
+        Dataspace dataspace = 1;
+        string table_uri = 2;
+        repeated ColumnSpec column_specs = 3;
+    }
+
+    message CreateColumnResponse {
+    }
+
+    message DeleteColumnRequest {
+        Dataspace dataspace = 1;
+        string table_uri = 2;
+        repeated string column_uris = 3;
+    }
+
+    message DeleteColumnResponse {
+    }
+
     message ReadDocumentsRequest {
         Dataspace dataspace = 1;
         repeated string document_ids = 2;    
-        repeated PropertySpec property_specs = 3;
+        repeated string column_uris = 3;
     }
 
     message ReadDocumentsResponse {
@@ -57,18 +80,18 @@
 
     message ReadDocumentResponse {
         string document_id = 1;
-        repeated Property properties = 2;
+        repeated CellValue cell_values = 2;
     }
 
     message WriteDocumentsRequest {
         Dataspace dataspace = 1;
-        repeated PropertySpec property_specs = 3;
+        repeated string column_uris = 3;
         repeated DocumentUpdate document_updates = 4;
     }
 
     message DocumentUpdate {
         string document_id = 1;
-        repeated PropertyValue property_values = 2;
+        repeated CellValue cell_values = 2;
     }
 
     enum OperationType {
@@ -85,4 +108,7 @@
     service Vera {
         rpc Get (ReadDocumentsRequest) returns (ReadDocumentsResponse);
         rpc Put (WriteDocumentsRequest) returns (WriteDocumentsResponse);
+        rpc CreateTable (CreateTableRequest) returns (CreateTableResponse);
+        rpc CreateColumn (CreateColumnRequest) returns (CreateColumnResponse);
+        rpc DeleteColumn (DeleteColumnRequest) returns (DeleteColumnResponse);
     }
