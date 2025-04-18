@@ -1,100 +1,88 @@
-syntax = "proto3";
+    syntax = "proto3";
 
-package vera_api;
+    package vera_api;
 
-import "google/protobuf/struct.proto";
+    import "google/protobuf/struct.proto";
 
-message Dataspace {
-    string universe = 1;
-    string table = 2;
-    string version = 3;
-}
-
-message VersionedDocId {
-    // globally unique document identifier
-    string document_id = 1;
-
-    // version identifier based on SHA1 cryptographic hash of document state
-    string version_id = 2;
-}
-message Document {
-    VersionedDocId verioned_document_id = 1;
-    string prior_version = 2;
-    map<string, Property> properties = 3;
-}
-
-message PropertySpec {
-    string property_id = 1;
-    string type_id = 2;
-}
-message Property {
-    PropertySpec spec = 1;
-    repeated PropertyValue value = 3;
-}
-
-message PropertyValue {
-    oneof data {
-        string string_value = 1;
-        int64 int64_value = 2;
-        double double_value = 3;
-        google.protobuf.Value proto_value = 4;
-        Attachment attachment = 5;
+    message Dataspace {
+        string universe = 1;
+        string table = 2;
+        string version = 3;
     }
-}
 
-message S3Attachment {
-
-}
-
-message Attachment {
-    oneof file {
-        S3Attachment s3 = 1;
+    message Document {
+        string document_id = 1;
+        string prior_version = 2;
+        map<string, Property> properties = 3;
     }
-}
 
-message ReadDocumentsRequest {
-    Dataspace dataspace = 1;
-    repeated VersionedDocId versioned_doc_ids = 2;    
-    repeated PropertySpec property_specs = 3;
-}
+    message PropertySpec {
+        string property_id = 1;
+        string type_id = 2;
+    }
+    message Property {
+        PropertySpec spec = 1;
+        repeated PropertyValue value = 3;
+    }
 
-message ReadDocumentsResponse {
-    repeated ReadDocumentResponse read_documents = 1;
-}
+    message PropertyValue {
+        oneof data {
+            string string_value = 1;
+            int64 int64_value = 2;
+            double double_value = 3;
+            google.protobuf.Value proto_value = 4;
+            Attachment attachment = 5;
+        }
+    }
 
-message ReadDocumentResponse {
-    VersionedDocId versioned_doc_ids = 1; 
-    repeated Property properties = 2;
-}
+    message S3Attachment {
 
-message WriteDocumentsRequest {
-    Dataspace dataspace = 1;
-    repeated WriteDocumentRequest write_docs = 2;    
-}
+    }
 
-enum OperationType {
-    Replace = 0;
-    Append = 1;
-    Merge = 2;
-    Remove = 3;
-}
+    message Attachment {
+        oneof file {
+            S3Attachment s3 = 1;
+        }
+    }
 
-message PropertyUpdate {
-    PropertySpec spec = 1;
-    OperationType operation_type = 2;
-    repeated PropertyValue value = 3;
-}
+    message ReadDocumentsRequest {
+        Dataspace dataspace = 1;
+        repeated string document_ids = 2;    
+        repeated PropertySpec property_specs = 3;
+    }
 
-message WriteDocumentRequest {
-    VersionedDocId versioned_doc_id = 1;
-    repeated PropertyUpdate property_updates = 2;
-}
+    message ReadDocumentsResponse {
+        repeated ReadDocumentResponse read_docs = 1;
+    }
 
-message WriteDocumentsResponse {
+    message ReadDocumentResponse {
+        string document_id = 1;
+        repeated Property properties = 2;
+    }
 
-}
+    message WriteDocumentsRequest {
+        Dataspace dataspace = 1;
+        repeated PropertySpec property_specs = 3;
+        repeated DocumentUpdate document_updates = 4;
+    }
 
-service Vera {
-    rpc Get (ReadDocumentsRequest) returns (ReadDocumentsResponse);
-    rpc Put (WriteDocumentsRequest) returns (WriteDocumentsResponse);
-}
+    message DocumentUpdate {
+        string document_id = 1;
+        repeated PropertyValue property_values = 2;
+    }
+
+    enum OperationType {
+        Replace = 0;
+        Append = 1;
+        Merge = 2;
+        Remove = 3;
+    }
+
+    message WriteDocumentsResponse {
+
+    }
+
+    service Vera {
+        rpc Get (ReadDocumentsRequest) returns (ReadDocumentsResponse);
+        rpc Put (WriteDocumentsRequest) returns (WriteDocumentsResponse);
+    }

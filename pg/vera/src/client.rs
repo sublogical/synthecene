@@ -1,9 +1,6 @@
 use clap::{Parser, Subcommand, Args};
 use clap_verbosity_flag::{ Verbosity, InfoLevel };
-use env_logger::Builder;
-use log::{debug, error, info };
-use tonic::transport::Channel;
-use tonic::{Request, Streaming, Status};
+use log::{error, info };
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -15,17 +12,10 @@ pub mod vera_api {
 enum VeraError {
     #[error("invalid namespace: {0}")]
     InvalidNamespace(String),
-
-    #[error("invalid key-value: {0}")]
-    InvalidKeyVal(String),
 }
 
 use vera_api::{
     vera_client::VeraClient,
-
-    WriteDocumentsRequest,
-    WriteDocumentsResponse,
-    WriteDocumentRequest,
 };
 
 #[derive(Parser)]
@@ -136,18 +126,18 @@ async fn main() -> Result<(), VeraError> {
 
     match &cli.command {
         Commands::Put { namespace, id, properties } => {
-            println!("Put {:?}", namespace);
-            println!("Put {:?}", id);
+            info!("Put {:?}", namespace);
+            info!("Put {:?}", id);
             let resolved_properties = resolve_namespace(namespace, properties)?;
             for (key, value) in resolved_properties {
-                println!("-- {:?}={:?}", key, value);
+                info!("-- {:?}={:?}", key, value);
             }
         }
         Commands::Get { namespace, id, properties } => {
-            println!("Get {:?}", namespace);
-            println!("Get {:?}", id);
+            info!("Get {:?}", namespace);
+            info!("Get {:?}", id);
             for (key, value) in properties {
-                println!("-- {:?}={:?}", key, value);
+                info!("-- {:?}={:?}", key, value);
             }
         }
     }
