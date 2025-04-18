@@ -5,6 +5,8 @@ use vera::vera_api::vera_server::{ Vera, VeraServer };
 use vera::vera_api::{
     CreateTableRequest,
     CreateTableResponse,
+    DeleteTableRequest,
+    DeleteTableResponse,
     CreateColumnRequest,
     CreateColumnResponse,
     DeleteColumnRequest,
@@ -83,7 +85,6 @@ impl Vera for VeraService {
         &self,
         request: Request<CreateTableRequest>,
     ) -> Result<Response<CreateTableResponse>, Status> {
-        info!("Creating table: {:?}", request);
         let req = request.into_inner();
 
         // todo: check permissions of caller to create table in this universe
@@ -106,6 +107,45 @@ impl Vera for VeraService {
         info!("Table created: {:?}.{:?}", keyspace, table_name);
 
         Ok(Response::new(CreateTableResponse {}))
+    }
+
+    #[instrument(skip(self))]
+    async fn delete_table(
+        &self,
+        request: Request<DeleteTableRequest>,
+    ) -> Result<Response<DeleteTableResponse>, Status> {
+        let req = request.into_inner();
+        let keyspace = derive_keyspace(&req.universe_uri);
+        let table_name = derive_table_name(&req.table_uri);
+
+        // todo: check permissions of caller to create table in this universe
+
+        if !req.delete_if_not_empty {
+            let query = format!("SELECT document_uri FROM {}.{} LIMIT 1", keyspace, table_name);
+            let result = self.session
+                .query_unpaged(query, ())
+                .await
+                .map_err(|e| Status::internal(e.to_string()))?
+                .into_rows_result()
+                .map_err(|e| Status::internal(e.to_string()))?;
+
+            if result.rows_num() > 0 {
+                return Err(Status::failed_precondition("Table is not empty"));
+            }
+        }
+
+        let query = format!("DROP TABLE {}.{}", keyspace, table_name);
+
+        info!("Dropping table: {:?}.{:?}", keyspace, table_name);
+
+        let result = self.session
+            .query_unpaged(query, ())
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?; // todo: improve error handling
+
+        info!("Table dropped: {:?}.{:?}", keyspace, table_name);
+
+        Ok(Response::new(DeleteTableResponse {}))
     }
 
     #[instrument(skip(self))]

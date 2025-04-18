@@ -23,6 +23,7 @@ enum VeraError {
 use vera_api::{
     vera_client::VeraClient,
     CreateTableRequest,
+    DeleteTableRequest,
     ColumnSpec,
 };
 
@@ -85,6 +86,18 @@ enum Commands {
 
         #[arg(value_parser = parse_key_val_map::<String, String>)]
         column_config: HashMap<String, String>,    
+    },
+
+    DeleteTable {
+        #[arg(long="ns", value_parser = parse_key_val_map::<String, String>)]
+        namespace: Option<HashMap<String, String>>,
+
+        universe_uri: String,
+
+        table_uri: String,
+
+        #[arg(long = "if-not-empty", default_value = "false")]
+        delete_if_not_empty: bool,
     },
 
     CreateColumn {
@@ -165,28 +178,35 @@ fn compute_namespace_map(
     namespace_map
 }
 
+fn resolve_namespace(
+    namespace: &HashMap<String, String>,
+    item: &str
+) -> Result<String, VeraError> {
+    if let Some(pos) = item.find(':') {
+        let namespace_key = &item[..pos];
+        let property_key = &item[pos + 1..];
+        let resolved_prefix = namespace
+            .get(namespace_key)
+            .ok_or_else(|| VeraError::InvalidNamespace(namespace_key.to_string()))?;
+
+        let mut resolved_item = resolved_prefix.to_string();
+        if resolved_prefix.ends_with('/') {
+            resolved_item.push_str(property_key);
+        } else {
+            resolved_item.push_str(format!("/{}", property_key).as_str());
+        }
+        Ok(resolved_item)
+    } else {
+        Ok(item.to_string())
+    }
+}
+
 fn resolve_namespace_vec(
     namespace: &HashMap<String, String>, 
     vec: &Vec<String>) -> Result<Vec<String>, VeraError> {
 
     let resolved_items : Result<Vec<_>, _>= vec.iter().map(|item| {
-        if let Some(pos) = item.find(':') {
-            let namespace_key = &item[..pos];
-            let property_key = &item[pos + 1..];
-            let resolved_prefix = namespace
-                .get(namespace_key)
-                .ok_or_else(|| VeraError::InvalidNamespace(namespace_key.to_string()))?;
-
-            let mut resolved_item = resolved_prefix.to_string();
-            if resolved_prefix.ends_with('/') {
-                resolved_item.push_str(property_key);
-            } else {
-                resolved_item.push_str(format!("/{}", property_key).as_str());
-            }
-            Ok(resolved_item)
-        } else {
-            Ok(item.to_string())
-        }
+        resolve_namespace(namespace, item)
     }).collect();
 
     resolved_items
@@ -258,6 +278,9 @@ async fn main() -> Result<(), VeraError> {
             let resolved_column_config = resolve_namespace_map(&namespace_map, column_config, true, true)?;
             info!("CreateTable universe:{:?}, table:{:?}, column_config:{:?}", universe_uri, table_uri, column_config);
 
+            let resolved_universe_uri = resolve_namespace(&namespace_map, universe_uri)?;
+            let resolved_table_uri = resolve_namespace(&namespace_map, table_uri)?;
+
             let column_specs = resolved_column_config.iter().map(|(key, value)| {
                 ColumnSpec {
                     column_uri: key.to_string(),
@@ -266,12 +289,27 @@ async fn main() -> Result<(), VeraError> {
             }).collect();
 
             let request = CreateTableRequest {
-                universe_uri: universe_uri.to_string(),
-                table_uri: table_uri.to_string(),
+                universe_uri: resolved_universe_uri,
+                table_uri: resolved_table_uri,
                 column_specs: column_specs,
             };
             let response = client.create_table(request).await?;
             info!("CreateTable response: {:?}", response);
+        }
+        Commands::DeleteTable { namespace, universe_uri, table_uri, delete_if_not_empty } => {
+            let namespace_map = compute_namespace_map(&namespace);
+            info!("DeleteTable universe:{:?}, table:{:?}, delete_if_not_empty:{:?}", universe_uri, table_uri, delete_if_not_empty);
+
+            let resolved_universe_uri = resolve_namespace(&namespace_map, universe_uri)?;
+            let resolved_table_uri = resolve_namespace(&namespace_map, table_uri)?;
+
+            let request = DeleteTableRequest {
+                universe_uri: resolved_universe_uri,
+                table_uri: resolved_table_uri,
+                delete_if_not_empty: *delete_if_not_empty,
+            };
+            let response = client.delete_table(request).await?;
+            info!("DeleteTable response: {:?}", response);
         }
         Commands::CreateColumn { namespace, universe_uri, table_uri, column_uri, column_config } => {
             let namespace_map = compute_namespace_map(&namespace);

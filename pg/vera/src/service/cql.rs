@@ -132,7 +132,7 @@ fn derive_column_type(type_uri: &str) -> Result<String, CqlError> {
 pub fn derive_table_create_schema(column_specs: &[ColumnSpec]) -> Result<String, CqlError> {
     let mut schema = String::new();
 
-    schema.push_str("document_id TEXT PRIMARY KEY, ");
+    schema.push_str("document_uri TEXT PRIMARY KEY, ");
     let column_types = column_specs
         .iter()
         .map(|spec| 

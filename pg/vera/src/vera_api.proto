@@ -44,6 +44,15 @@
     message CreateTableResponse {
     }
 
+    message DeleteTableRequest {
+        string universe_uri = 1;
+        string table_uri = 2;
+        bool delete_if_not_empty = 3;
+    }
+
+    message DeleteTableResponse {
+    }
+
     message CreateColumnRequest {
         string universe_uri = 1;
         string table_uri = 2;
@@ -105,6 +114,7 @@
         rpc Get (ReadDocumentsRequest) returns (ReadDocumentsResponse);
         rpc Put (WriteDocumentsRequest) returns (WriteDocumentsResponse);
         rpc CreateTable (CreateTableRequest) returns (CreateTableResponse);
+        rpc DeleteTable (DeleteTableRequest) returns (DeleteTableResponse);
         rpc CreateColumn (CreateColumnRequest) returns (CreateColumnResponse);
         rpc DeleteColumn (DeleteColumnRequest) returns (DeleteColumnResponse);
     }
