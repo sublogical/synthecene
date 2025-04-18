@@ -4,12 +4,6 @@
 
     import "google/protobuf/struct.proto";
 
-    message Dataspace {
-        string universe = 1;
-        string table = 2;
-        string version = 3;
-    }
-
     message Document {
         string document_id = 1;
         string prior_version = 2;
@@ -42,7 +36,7 @@
     }
 
     message CreateTableRequest {
-        Dataspace dataspace = 1;
+        string universe_uri = 1;
         string table_uri = 2;
         repeated ColumnSpec column_specs = 3;
     }
@@ -51,7 +45,7 @@
     }
 
     message CreateColumnRequest {
-        Dataspace dataspace = 1;
+        string universe_uri = 1;
         string table_uri = 2;
         repeated ColumnSpec column_specs = 3;
     }
@@ -60,7 +54,7 @@
     }
 
     message DeleteColumnRequest {
-        Dataspace dataspace = 1;
+        string universe_uri = 1;
         string table_uri = 2;
         repeated string column_uris = 3;
     }
@@ -69,9 +63,10 @@
     }
 
     message ReadDocumentsRequest {
-        Dataspace dataspace = 1;
-        repeated string document_ids = 2;    
-        repeated string column_uris = 3;
+        string universe_uri = 1;
+        string table_uri = 2;
+        repeated string document_ids = 3;    
+        repeated string column_uris = 4;
     }
 
     message ReadDocumentsResponse {
@@ -84,7 +79,8 @@
     }
 
     message WriteDocumentsRequest {
-        Dataspace dataspace = 1;
+        string universe_uri = 1;
+        string table_uri = 2;
         repeated string column_uris = 3;
         repeated DocumentUpdate document_updates = 4;
     }

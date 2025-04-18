@@ -2,18 +2,24 @@ use itertools::Itertools;
 use scylla::{Session };
 
 use vera::vera_api::{
-    DocumentUpdate,
     CellValue,
-    Dataspace,
+    ColumnSpec,
+    DocumentUpdate,
     cell_value::Data,
 };
 
-pub fn derive_keyspace(dataspace: &Dataspace) -> String {
-    format!("{}_universe", escape_uri(&dataspace.universe))
+#[derive(Debug, thiserror::Error)]
+pub enum CqlError {
+    #[error("unsupported type: {0}")]
+    UnsupportedType(String),
 }
 
-pub fn derive_table_name(dataspace: &Dataspace) -> String {
-    format!("{}_version_{}", escape_uri(&dataspace.table), escape_uri(&dataspace.version))
+pub fn derive_keyspace(universe_uri: &str) -> String {
+    format!("universe_{}", escape_uri(universe_uri))
+}
+
+pub fn derive_table_name(table_uri: &str) -> String {
+    escape_uri(table_uri)
 }
 
 pub fn derive_update_schema(column_uris: &[String]) -> String {
@@ -110,18 +116,52 @@ fn escape_uri(input: &str) -> String {
     result
 }
 
+fn derive_column_type(type_uri: &str) -> Result<String, CqlError> {
+    // todo: add support for set, list and map types
+    // todo: add support for user defined types
+    match type_uri {
+        "/std/text" => Ok("TEXT".to_string()),
+        "/std/int64" => Ok("BIGINT".to_string()),
+        "/std/int32" => Ok("INT".to_string()),
+        "/std/int" => Ok("INT".to_string()),
+        "/std/double" => Ok("DOUBLE".to_string()),
+        _ => Err(CqlError::UnsupportedType(type_uri.to_string())),
+    }
+}
+
+pub fn derive_table_create_schema(column_specs: &[ColumnSpec]) -> Result<String, CqlError> {
+    let mut schema = String::new();
+
+    schema.push_str("document_id TEXT PRIMARY KEY, ");
+    let column_types = column_specs
+        .iter()
+        .map(|spec| 
+            derive_column_type(&spec.type_uri)
+                .map(|column_type| format!("{} {}", escape_uri(&spec.column_uri), column_type))
+        )
+        .collect::<Result<Vec<String>, CqlError>>()?;
+
+    schema.push_str(&column_types.join(", "));
+
+    Ok(schema)
+}
+
+
+
+/**
+CREATE TABLE IF NOT EXISTS mykeyspace.mytable (
+    document_id string,
+    col1 text,
+    col2 text,
+    PRIMARY KEY (document_id)
+);
+*/
 
 
 #[cfg(test) ]
 mod tests { 
     use super::*;
-    fn generate_dataspace(universe: &str, table: &str, version: &str) -> Dataspace {
-        Dataspace {
-            universe: universe.to_string(),
-            table: table.to_string(),
-            version: version.to_string(),
-        }
-    }
+
 
     #[test]
     fn test_escape_uri() {
@@ -132,14 +172,14 @@ mod tests {
 
     #[test]
     fn test_derive_keyspace() {
-        assert_eq!(derive_keyspace(&generate_dataspace("test", "t1", "1")), "test_universe");
-        assert_eq!(derive_keyspace(&generate_dataspace("foo/bar#howdy", "t2", "1")), "foo__bar__howdy_universe");
+        assert_eq!(derive_keyspace("test"), "universe_test");
+        assert_eq!(derive_keyspace("foo/bar#howdy"), "universe_foo__bar__howdy");
     }
 
     #[test]
     fn test_derive_table_name() {
-        assert_eq!(derive_table_name(&generate_dataspace("test", "test", "1.0.1")), "test_version_1__0__1");
-        assert_eq!(derive_table_name(&generate_dataspace("test", "foo/bar#howdy", "v2")), "foo__bar__howdy_version_v2");
+        assert_eq!(derive_table_name("test"), "test");
+        assert_eq!(derive_table_name("foo/bar#howdy"), "foo__bar__howdy");
     }
 
     #[test]
@@ -198,6 +238,31 @@ mod tests {
         ];
 
         assert_eq!(derive_values(&document_updates), "(1, 'alpha', 'beta', 1, 2), (2, 'delta', 'epsilon', 3, 4.15)");
+    }
+
+    #[test]
+    fn test_derive_table_create_schema() {
+        let column_specs = vec![
+            ColumnSpec {
+                column_uri: "/my/foo".to_string(),
+                type_uri: "/std/text".to_string(),   
+            },
+            ColumnSpec {
+                column_uri: "/my/bar".to_string(),
+                type_uri: "/std/int64".to_string(),
+            },
+        ];
+
+        assert_eq!(derive_table_create_schema(&column_specs).unwrap(), "document_id TEXT PRIMARY KEY, __my__foo TEXT, __my__bar BIGINT");
+
+        let column_specs = vec![
+            ColumnSpec {
+                column_uri: "/my/foo".to_string(),
+                type_uri: "unknown".to_string(),   
+            },
+        ];
+
+        assert!(derive_table_create_schema(&column_specs).is_err());
     }
 }     
 

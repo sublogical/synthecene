@@ -29,6 +29,10 @@ async fn healthcheck(session: &Session) -> Result<(), Box<dyn std::error::Error>
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_env_filter("vera=debug")
+        .init();
 
     let uri = std::env::var("SCYLLA_URI")
     .unwrap_or_else(|_| "127.0.0.1:9042".to_string());
