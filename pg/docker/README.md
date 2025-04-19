@@ -1,4 +1,3 @@
-
 ### Install Dependencies
 
 ```
@@ -13,17 +12,17 @@ sudo docker-compose up -d
 
 ### TODO
 
+* ScyllaDB
+  * add local mount for data directory
+* MongoDB
+  * add local mount for data directory
 * Setup core services
+  * ~~ScyllaDB~~
   * ~~Kafka~~
   * ~~Redis~~
   * ~~MongoDB~~
   * ~~Zookeeper~~
   * ~~Schema Registry~~
-  * Spark
-  * Flink
-* Calico service
+* Synthecene services
   * Base docker image for Rust
   * Base docker image for Node
-* Features
-  * Large persistent disk map for MongoDB
-
