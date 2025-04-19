@@ -6,7 +6,9 @@ members = [
     "pg/glimmer", 
     "pg/heimdall",
     "pg/porta",
+    "pg/signal",
     "pg/vera", 
     "shared",
     "tools/vizzie",
+    "util/dexter"
 ]
