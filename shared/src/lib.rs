@@ -122,7 +122,11 @@ pub mod result {
 }
 
 pub mod applications {
-    pub const CRAWLER:&str = "calico:acquisition:crawler:0";
+    pub const CRAWLER:&str = "synthecene:acquisition:crawler:0";    // crawler
+    pub const GLIMMER:&str = "synthecene:serving:glimmer:0";        // long-running agent server
+    pub const MEPHESTO:&str = "synthecene:processing:mephesto:0";   // workflow engine
+    pub const SIGNAL:&str = "synthecene:processing:signal:0";       // signal processing worker
+    pub const VERA:&str = "synthecene:store:vera:0";                // feature store
 }
 
 pub mod types;
