@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "pg/calico",
+    "pg/crawler",
     "pg/glimmer", 
     "pg/heimdall",
     "pg/porta",

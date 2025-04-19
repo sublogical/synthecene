@@ -8,8 +8,8 @@ name = "crawler"
 path = "src/crawler.rs"
 
 [dependencies]
-store = { path = "../store" }
-calico-shared = { path = "../shared" }
+calico = { path = "../calico" }
+synthecene-shared = { path = "../../shared" }
 anyhow = "1"
 async-trait = "0.1"
 async-stream = "0.3"
