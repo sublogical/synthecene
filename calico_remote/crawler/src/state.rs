@@ -1,4 +1,4 @@
-use calico_shared::types::systemtime_to_timestamp;
+use synthecene_shared::types::systemtime_to_timestamp;
 use log::debug;
 use prost::bytes::Bytes;
 use rand::RngCore;
@@ -566,8 +566,8 @@ impl DomainState {
             .map_err(|err| Error::FailedCommit(Box::new(err)))?;
 
         let commit = log.create_commit(&head_id,
-            Some(calico_shared::applications::CRAWLER.to_string()),
-            Some(calico_shared::applications::CRAWLER.to_string()),
+            Some(synthecene_shared::applications::CRAWLER.to_string()),
+            Some(synthecene_shared::applications::CRAWLER.to_string()),
             Some("Frontier Checkpoint".to_string()),
             timestamp,
             vec![],

@@ -1,6 +1,6 @@
 use std::time::{SystemTime, Instant, UNIX_EPOCH};
 
-use calico_shared::result::CalicoResult;
+use synthecene_shared::result::SyntheceneResult;
 use crate::protocol;
 use crate::smarts;
 use itertools::Itertools;
@@ -65,7 +65,7 @@ pub fn robots_filter(robots: &Option<String>, url: &str) -> bool {
     }
 }
 
-pub async fn retrieve(url: String) -> CalicoResult<Capture> {
+pub async fn retrieve(url: String) -> SyntheceneResult<Capture> {
     let fetched_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("Should always be able to get time since EPOCH")

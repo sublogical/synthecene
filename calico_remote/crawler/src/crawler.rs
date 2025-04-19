@@ -4,7 +4,7 @@ use std::process::exit;
 use crawler::protocol;
 use crate::task::{DeepCrawlTask, Task};
 use crate::controller::{Controller, OneTimeUse};
-use calico_shared::result::CalicoResult;
+use synthecene_shared::result::SyntheceneResult;
 use chrono::DateTime;
 use clap::*;
 use log::{error, info};
@@ -84,7 +84,7 @@ pub(crate) enum Commands {
     WideCrawl { seed: Vec<String>} 
 }
 
-async fn init_object_store_from_args(cli: &CrawlerCLI, fallback_path: &PathBuf) -> CalicoResult<Arc<dyn ObjectStore>> 
+async fn init_object_store_from_args(cli: &CrawlerCLI, fallback_path: &PathBuf) -> SyntheceneResult<Arc<dyn ObjectStore>> 
 {
     match cli.object_store_type {
         ObjectStoreType::Local => {
