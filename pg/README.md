@@ -2,11 +2,23 @@
 
 * porta - gateway to timeseries data APIs
 * vera - ground truth store
+* mecha - inference service
+* 
 
 
+# Infrastructure Components
 
-#### Components
+## Porta
 
+## Vera
+## Inference Service
+  - inference service
+    - gRPC
+    - REST
+    - batch inference
+    - caching
+    - prefix caching
+  - inference client
 
 
 * HITL

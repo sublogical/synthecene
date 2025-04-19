@@ -38,7 +38,7 @@
   * ~~add proto~~
 * put
   * add column if it doesn't exist
-  * add type munging
+  * add type coercion
   * add escaping / CQL injection protection
   * ~~add support for JSON parameters in client~~
   * ~~implement CQL~~
@@ -69,3 +69,23 @@
 ### Dependencies
 
 * datastax-cpp - https://docs.datastax.com/en/developer/cpp-driver/2.16/topics/installation/index.html
+
+# How it works
+
+* Universe is a collection of tables identified with URI
+* Table is 
+* COLUMN
+  * belongs to a TABLE
+  * has a single TYPE
+* TYPE - defines format of 
+  * defines a CQL type mapping
+
+
+
+## PUT Commit Algorithm
+
+1. Lookup column for all columns in PUT request
+2. If any columns are missing, infer schema from values and create the column
+  a - compute namespace with default inferred namespace property on PUT request, then TABLE, then UNIVERSE
+  b - select a std: type based on the data-type used 
+2. Lookup type_uri for all columns
