@@ -1,0 +1,125 @@
+syntax = "proto3";
+
+package indigo.protocol;
+
+message LastVisit {
+    bool added_to_frontier = 1;
+    optional uint64 fetched_at = 2;
+    optional uint32 status_code = 3;
+}
+
+enum RequestType {
+    Page = 0;
+    Sitemap = 1;
+}
+
+message CaptureRequest {
+    string path = 1;
+    RequestType capture_type = 2;
+}
+
+message Host {
+    /// Optionally specify a non-default scheme (defaults to 'https')
+    optional string scheme = 1;
+
+    /// FQDN for the fetch
+    string hostname = 2;
+
+    optional uint32 port = 3;
+}
+
+message DeepFetchTask {
+    Host host = 1;
+
+    uint64 fetch_rate_ms = 2;
+
+    bool use_sitemap = 3;
+
+    // number of pages to fetch in the deep fetch, max
+    uint64 num_to_fetch = 4;
+
+    // Wall-time for the deep fetch to run, in milliseconds
+    uint64 time_to_fetch = 5;
+
+    // Set of seeds to include in the frontier
+    repeated CaptureRequest seed_list = 6;
+
+    // minimum change date to retrieve, in milliseconds since epoch. Used to 
+    // filter pages in the sitemap and to set the 'If-Modified-Since' header
+    optional uint64 min_changed_date = 7;
+}
+
+message Task {
+    oneof task {
+        DeepFetchTask deep_fetch = 1;
+    }
+}
+
+enum TaskState {
+    Pending = 0;
+    Running = 1;    
+    Complete = 2;
+    Failed = 3;
+}
+message TaskStatus {
+    uint64 task_id = 1;
+    Task task = 2;
+    TaskState state = 3;
+    optional string error = 4;
+}
+
+
+message SubmitTaskRequest {
+    repeated Task task = 1;
+}
+
+
+message SubmitTaskResponse {
+    repeated Task TaskStatus = 1;
+}
+
+message ListTaskRequest {
+    // Customer provided terms to filter the list of tasks
+    optional string terms = 1;
+
+    // Customer provided state to filter the list of tasks
+    optional TaskState state = 2;
+
+    // Offset into the list of tasks
+    optional uint32 offset = 3;
+
+    // Number of tasks to return per page
+    optional uint32 page_size = 4;
+}
+
+message ListTaskResponse {
+    repeated Task TaskStatus = 1;
+}
+
+
+message GetTaskRequest {
+    uint64 task_id = 1;
+}
+
+message GetTaskResponse {
+    Task TaskStatus = 1;
+}
+
+message DeleteTaskRequest {
+    uint64 task_id = 1;
+}
+
+message DeleteTaskResponse {
+    Task TaskStatus = 1;
+}
+
+service TaskService {
+    rpc SubmitTask(SubmitTaskRequest) returns (SubmitTaskResponse);
+
+    rpc ListTasks(ListTaskRequest) returns (ListTaskResponse);
+
+    rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
+
+    rpc DeleteTask(DeleteTaskRequest) returns (DeleteTaskResponse);
+}
+

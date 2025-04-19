@@ -1,0 +1,14 @@
+{
+  "name": "parrot",
+  "version": "0.1.0",
+  "description": "Plugins for parroting work with AI",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@types/google-apps-script": "^1.0.57",
+    "typescript": "^4.9.5"
+  }
+}

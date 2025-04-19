@@ -1,0 +1,12 @@
+<template>
+    <v-container class="fill-height">
+      <v-responsive class="d-flex align-center text-center fill-height">
+        <div class="text-body-2 font-weight-light mb-n1">Models Page</div>
+        Purpose: This page will allow the user to create, edit, and delete models.
+      </v-responsive>
+    </v-container>
+</template>
+  
+<script lang="ts" setup>
+//
+</script>
