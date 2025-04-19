@@ -4,29 +4,45 @@
 # TODO
 
 * create table
+  * mark table as created in global registry
+  * move both CQL queries into a single batch
   * ~~add proto~~
   * ~~implement service~~
   * ~~implement client CLI~~
   * ~~implement CQL~~
 * delete table
+  * mark table as deleted in global registry
+  * move both CQL queries into a single batch
+  * ~~add proto~~
+  * ~~implement service~~
+  * ~~implement client CLI~~
+  * ~~implement CQL~~
+  * ~~add not-empty check~~
+* get table
   * add proto
   * implement service
   * implement client CLI
   * implement CQL
+  * list of columns
+* update table
+
 * add column
-  * ~~add proto~~
   * implement service
   * implement client CLI
   * implement CQL
+  * ~~add proto~~
 * delete column
-  * ~~add proto~~
   * implement service
   * implement client CLI
   * implement CQL
-* put
   * ~~add proto~~
+* put
   * add column if it doesn't exist
-  * implement CQL
+  * add support for JSON parameters in client
+  * add escaping / CQL injection protection
+  * ~~implement CQL~~
+  * ~~implement client CLI~~
+  * ~~add proto~~
   * ~~basic type support~~
 * get
   * ~~add proto~~

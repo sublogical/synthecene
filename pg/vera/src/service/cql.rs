@@ -33,33 +33,12 @@ pub fn derive_update_schema(column_uris: &[String]) -> String {
     
     // Join them with commas and wrap in a single set of parentheses
     schema.push('(');
-    schema.push_str("doc_id");
+    schema.push_str("document_uri");
     if !columns.is_empty() {
         schema.push_str(", ");
         schema.push_str(&columns.join(", "));
     }
     schema.push(')');
-
-    schema
-}
-
-/**
- * Generate a schema for a duplicate update in a 
- * "INSERT ... ON DUPLICATE KEY UPDATE" statement
- *
- * E.g. id=VALUES(id), a=VALUES(a), b=VALUES(b), c=VALUES(c)
- */
-pub fn derive_duplicate_update_schema(column_uris: &[String]) -> String {
-    let mut schema = String::new();
-
-    // Create a comma-separated list of escaped column URIs
-    let columns: Vec<String> = column_uris
-        .iter()
-        .map(|uri| format!("{c} = VALUES({c})", c = escape_uri(uri)))
-        .collect();
-
-    schema.push_str("doc_id = VALUES(doc_id), ");
-    schema.push_str(&columns.join(", "));
 
     schema
 }
@@ -92,7 +71,7 @@ pub fn derive_values(document_updates: &[DocumentUpdate]) -> String {
                 .map(|value| to_cql_value(value))
                 .collect();
 
-            values.push_str(&format!("({}, ", update.document_id));
+            values.push_str(&format!("('{}', ", update.document_id));
             values.push_str(&cell_values.join(", "));
             values.push_str(")");
             values
@@ -192,7 +171,7 @@ mod tests {
 
         assert_eq!(
             derive_update_schema(&column_uris),
-            "(doc_id, __std__text_prompt, __std__my_foo, __std__my_bar)"
+            "(document_uri, __std__text_prompt, __std__my_foo, __std__my_bar)"
         );
     }
 

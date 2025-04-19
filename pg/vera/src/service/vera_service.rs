@@ -26,8 +26,9 @@ use tracing::{info, instrument};
 use crate::service::cql::{
     derive_keyspace,
     derive_table_name,
-    derive_update_schema,
     derive_table_create_schema,
+    derive_update_schema,
+    derive_values,
 };
 
 #[derive(Debug)]
@@ -58,27 +59,24 @@ impl Vera for VeraService {
         let keyspace = derive_keyspace(&req.universe_uri);
         let table_name = derive_table_name(&req.table_uri);
         let schema = derive_update_schema(&req.column_uris);
+        let values = derive_values(&req.document_updates);
 
         info!("Writing to table: {:?}.{:?} with schema: {:?}", keyspace, table_name, schema);
 
         // todo: inspect table schema and add missing columns if necessary
+        let query = format!("INSERT INTO {}.{} {} VALUES {}", keyspace, table_name, schema, values);
 
-        /* 
-            INSERT INTO mytable (id, a, b, c)
-            VALUES (1, 'a1', 'b1', 'c1'),
-            (2, 'a2', 'b2', 'c2'),
-            (3, 'a3', 'b3', 'c3'),
-            (4, 'a4', 'b4', 'c4'),
-            (5, 'a5', 'b5', 'c5'),
-            (6, 'a6', 'b6', 'c6')
-            ON DUPLICATE KEY UPDATE id=VALUES(id),
-            a=VALUES(a),
-            b=VALUES(b),
-            c=VALUES(c);
-        */
+        info!("Query: {}", query);
+        let result = self.session
+            .query_unpaged(query, ())
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?; // todo: improve error handling
 
-        todo!("write to cassandra");
+        info!("Table created: {:?}.{:?}", keyspace, table_name);
+
+        Ok(Response::new(WriteDocumentsResponse {}))
     }
+
 
     #[instrument(skip(self))]
     async fn create_table(
@@ -151,8 +149,12 @@ impl Vera for VeraService {
     #[instrument(skip(self))]
     async fn create_column(
         &self,
-        _request: Request<CreateColumnRequest>,
+        request: Request<CreateColumnRequest>,
     ) -> Result<Response<CreateColumnResponse>, Status> {
+        let req = request.into_inner();
+        let keyspace = derive_keyspace(&req.universe_uri);
+        let table_name = derive_table_name(&req.table_uri);
+
         todo!("create column");
     }
 

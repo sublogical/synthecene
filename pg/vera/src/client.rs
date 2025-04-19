@@ -22,9 +22,13 @@ enum VeraError {
 
 use vera_api::{
     vera_client::VeraClient,
+    CellValue,
     CreateTableRequest,
-    DeleteTableRequest,
     ColumnSpec,
+    DeleteTableRequest,
+    DocumentUpdate,
+    WriteDocumentsRequest,
+    cell_value::Data,
 };
 
 #[derive(Parser)]
@@ -249,16 +253,34 @@ async fn main() -> Result<(), VeraError> {
     match &cli.command {
         Commands::Put { namespace, universe_uri, table_uri, document_uri, column_values } => {
             let namespace_map = compute_namespace_map(&namespace);
-            info!("Put {:?}", namespace_map);
-
-            info!("Put {:?}", universe_uri);
-            info!("Put {:?}", table_uri);
-            info!("Put {:?}", document_uri);
-
             let resolved_column_values = resolve_namespace_map(&namespace_map, column_values, true, false)?;
-            for (key, value) in resolved_column_values {
-                info!("-- {:?}={:?}", key, value);
-            }
+            info!("Put universe:{:?}, table:{:?}, document:{:?}, column_values:{:?}", universe_uri, table_uri, document_uri, resolved_column_values);
+
+            let resolved_universe_uri = resolve_namespace(&namespace_map, universe_uri)?;
+            let resolved_table_uri = resolve_namespace(&namespace_map, table_uri)?;
+            let resolved_document_uri = resolve_namespace(&namespace_map, document_uri)?;
+            let resolved_column_uris = resolved_column_values.keys().cloned().collect();
+
+            let cell_values = resolved_column_values.values().cloned()
+                .map(|value| CellValue {
+                    // todo: this should have some way of creating the correct type
+                    data: Some(Data::StringValue(value)),
+                })
+                .collect();
+
+            let document_updates = vec![DocumentUpdate {
+                document_id: resolved_document_uri,
+                cell_values: cell_values,
+            }];
+
+            let request = WriteDocumentsRequest {
+                universe_uri: resolved_universe_uri,
+                table_uri: resolved_table_uri,
+                column_uris: resolved_column_uris,
+                document_updates: document_updates,
+            };
+            let response = client.put(request).await?;
+            info!("Put response: {:?}", response);
         }
         Commands::Get { namespace, universe_uri, table_uri, document_uri, column_uris } => {
             let namespace_map = compute_namespace_map(&namespace);
