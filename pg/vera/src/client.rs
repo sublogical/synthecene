@@ -13,11 +13,15 @@ enum VeraError {
     #[error("invalid namespace: {0}")]
     InvalidNamespace(String),
 
+    #[error("invalid column values: {0}")]
+    InvalidColumnValues(String),
+
     #[error("failed to connect to server: {0}")]
     TonicError(#[from] tonic::transport::Error),
 
     #[error("failed to call RPC method: {0}")]
     GrpcError(#[from] tonic::Status),
+
 }
 
 use vera_api::{
@@ -64,8 +68,8 @@ enum Commands {
 
         document_uri: String,
 
-        #[arg(value_parser = parse_key_val_map::<String, String>)]
-        column_values: HashMap<String, String>,    
+        #[arg(value_parser = parse_json_value::<serde_json::Value>)]
+        column_values: serde_json::Value,
     },
     Get {
         #[arg(long="ns", value_parser = parse_key_val_map::<String, String>)]
@@ -128,7 +132,14 @@ enum Commands {
 
         column_uri: String,
     },
-    
+}
+
+fn parse_json_value<T>(s: &str) -> Result<T, Box<dyn Error + Send + Sync + 'static>>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let value = serde_json::from_str::<T>(s)?;
+    Ok(value)
 }
 
 fn parse_key_val_map<T, U>(s: &str) -> Result<HashMap<T, U>, Box<dyn Error + Send + Sync + 'static>>
@@ -253,20 +264,41 @@ async fn main() -> Result<(), VeraError> {
     match &cli.command {
         Commands::Put { namespace, universe_uri, table_uri, document_uri, column_values } => {
             let namespace_map = compute_namespace_map(&namespace);
-            let resolved_column_values = resolve_namespace_map(&namespace_map, column_values, true, false)?;
-            info!("Put universe:{:?}, table:{:?}, document:{:?}, column_values:{:?}", universe_uri, table_uri, document_uri, resolved_column_values);
+
+            let serde_json::Value::Object(column_object) = column_values else {
+                return Err(VeraError::InvalidColumnValues("column_values is required to be a JSON object".to_string()));
+            };
+
+            let resolved_column_uris = resolve_namespace_vec(&namespace_map, &column_object.keys().cloned().collect())?;
+            let cell_values = column_object.values().cloned().map(|value| {
+                match value {
+                    serde_json::Value::String(s) => Ok(CellValue {
+                        data: Some(Data::StringValue(s)),
+                    }),
+                    serde_json::Value::Number(n) => {
+                        if n.is_i64() {
+                            Ok(CellValue {
+                                data: Some(Data::Int64Value(n.as_i64().unwrap())),
+                            })
+                        } else {
+                            Ok(CellValue {
+                                data: Some(Data::DoubleValue(n.as_f64().unwrap())),
+                            })
+                        }
+                    },
+                    serde_json::Value::Bool(b) => Ok(CellValue {
+                        data: Some(Data::BooleanValue(b)),
+                    }),
+                    serde_json::Value::Array(a) => Err(VeraError::InvalidColumnValues("array values are not supported".to_string())),
+                    serde_json::Value::Object(o) => Err(VeraError::InvalidColumnValues("object values are not supported".to_string())),
+                    _ => Err(VeraError::InvalidColumnValues("unsupported value type".to_string())),
+                }
+            }).collect::<Result<Vec<_>, _>>()?;
 
             let resolved_universe_uri = resolve_namespace(&namespace_map, universe_uri)?;
             let resolved_table_uri = resolve_namespace(&namespace_map, table_uri)?;
             let resolved_document_uri = resolve_namespace(&namespace_map, document_uri)?;
-            let resolved_column_uris = resolved_column_values.keys().cloned().collect();
-
-            let cell_values = resolved_column_values.values().cloned()
-                .map(|value| CellValue {
-                    // todo: this should have some way of creating the correct type
-                    data: Some(Data::StringValue(value)),
-                })
-                .collect();
+            info!("Put universe:{:?}, table:{:?}, document:{:?}, column_uris:{:?}", resolved_universe_uri, resolved_table_uri, resolved_document_uri, resolved_column_uris);
 
             let document_updates = vec![DocumentUpdate {
                 document_id: resolved_document_uri,

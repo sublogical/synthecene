@@ -38,15 +38,18 @@
   * ~~add proto~~
 * put
   * add column if it doesn't exist
-  * add support for JSON parameters in client
+  * add type munging
   * add escaping / CQL injection protection
+  * ~~add support for JSON parameters in client~~
   * ~~implement CQL~~
   * ~~implement client CLI~~
   * ~~add proto~~
   * ~~basic type support~~
 * get
   * ~~add proto~~
-  
+  * implement service
+  * implement client CLI
+  * implement CQL
 
 * service
   * add schema check / version compat to deep healthcheck
