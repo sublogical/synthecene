@@ -1,6 +1,6 @@
 use async_recursion::async_recursion;
 use bytes::Bytes;
-use calico_shared::types::systemtime_to_timestamp;
+use synthecene_shared::types::systemtime_to_timestamp;
 use futures::{TryStreamExt, future};
 use log::info;
 use object_store::ObjectStore;
@@ -11,7 +11,7 @@ use std::{ops::Deref, time::SystemTime};
 use std::sync::Arc;
 
 use crate::protocol;
-use calico_shared::result::{CalicoResult, CalicoError};
+use synthecene_shared::result::{SyntheceneResult, SyntheceneError};
 
 type BranchRef<'a> = &'a str;
 pub const MAIN: &str = "main";
@@ -32,7 +32,7 @@ impl TableView<'_> {
         self.checkpoint.is_some()
     }
     
-    async fn from_history<'a>(log: &'a TransactionLog, history: Vec<Commit<'a>>) -> CalicoResult<TableView<'a>> {
+    async fn from_history<'a>(log: &'a TransactionLog, history: Vec<Commit<'a>>) -> SyntheceneResult<TableView<'a>> {
         let mut since_checkpoint:Vec<Commit> = Vec::new();
 
         for commit in history {
@@ -85,7 +85,7 @@ impl Deref for Commit<'_> {
 }
 
 impl Commit<'_> {
-    pub async fn history(&self, max_history: u32) -> CalicoResult<Vec<Commit>> {
+    pub async fn history(&self, max_history: u32) -> SyntheceneResult<Vec<Commit>> {
         let mut max_history = max_history;
         let mut history:Vec<Commit> = Vec::new();   
         let mut next_id = self.parent_id.to_vec();
@@ -108,32 +108,32 @@ impl Commit<'_> {
         Ok(history)
     }
 
-    pub async fn view(&self, max_history: u32) -> CalicoResult<TableView> {
+    pub async fn view(&self, max_history: u32) -> SyntheceneResult<TableView> {
         let history = self.history(max_history).await?;
         TableView::from_history(self.log, history).await
     }
 
     // Determines whether there is an existing checkpoint for this commit
-    pub async fn has_checkpoint(&self) -> CalicoResult<bool> {
+    pub async fn has_checkpoint(&self) -> SyntheceneResult<bool> {
         self.log.has_checkpoint(&self.commit_id).await
     }
 
-    pub async fn get_checkpoint(&self) -> CalicoResult<Checkpoint> {
+    pub async fn get_checkpoint(&self) -> SyntheceneResult<Checkpoint> {
         self.log.get_checkpoint(&self.commit_id).await
     }
 
-    pub async fn parent(&self) -> CalicoResult<Commit> {
+    pub async fn parent(&self) -> SyntheceneResult<Commit> {
         self.log.get_commit(&self.parent_id).await
     }
 
-    pub async fn at_checkpoint(&self) -> CalicoResult<Commit> {
+    pub async fn at_checkpoint(&self) -> SyntheceneResult<Commit> {
         todo!()
     }
 
     // walks the default parent heirarchy back until it finds the commit that 
     // represents the state of this lineage at the specified timestamp, ie the
     // first commit found at a timestamp equal to or less than <timestamp>
-    pub async fn at_timestamp(&self, _timestamp: u64) -> CalicoResult<Commit> {
+    pub async fn at_timestamp(&self, _timestamp: u64) -> SyntheceneResult<Commit> {
         let mut _candidate_commit = self;
         let mut _candidate_timestamp = self.timestamp;
 
@@ -228,7 +228,7 @@ impl PendingCommit {
         self
     }
 
-    pub async fn commit(self, log: &TransactionLog) -> CalicoResult<protocol::Commit> {
+    pub async fn commit(self, log: &TransactionLog) -> SyntheceneResult<protocol::Commit> {
         let mut commit = protocol::Commit::default();
 
         commit.commit_id = self.commit_id.to_vec();
@@ -268,7 +268,7 @@ pub struct Checkpoint<'a> {
 
 impl Checkpoint<'_> {
     // Returns the commit object this checkpoint corresponds to.
-    pub async fn commit(&self) -> CalicoResult<Commit> {
+    pub async fn commit(&self) -> SyntheceneResult<Commit> {
         self.log.get_commit(&self.checkpoint.commit_id).await
     }
 }
@@ -322,7 +322,7 @@ pub struct TransactionLog {
 }
 
 impl TransactionLog {
-    pub async fn init(object_store: Arc<dyn ObjectStore>) -> CalicoResult<TransactionLog> {
+    pub async fn init(object_store: Arc<dyn ObjectStore>) -> SyntheceneResult<TransactionLog> {
         let log = TransactionLog{ 
             object_store,
         };
@@ -339,7 +339,7 @@ impl TransactionLog {
         Ok(log)
     }
 
-    pub async fn open(object_store: Arc<dyn ObjectStore>) -> CalicoResult<TransactionLog> {
+    pub async fn open(object_store: Arc<dyn ObjectStore>) -> SyntheceneResult<TransactionLog> {
         // check to see if the path exists and is initialized, panic if not
         let path: ObjectStorePath = Self::META_FILE.try_into().unwrap();
         let _meta = object_store.head(&path).await?;
@@ -347,29 +347,29 @@ impl TransactionLog {
         Ok(TransactionLog { object_store })
     }
 
-    pub async fn head<'a>(&self, branch: BranchRef<'a>) -> CalicoResult<Commit> {
+    pub async fn head<'a>(&self, branch: BranchRef<'a>) -> SyntheceneResult<Commit> {
         let commit_id = self.head_id(branch).await?;
         let commit = self.get_commit(&commit_id).await?;
 
         Ok(commit)
     }
 
-    pub async fn head_main(&self) -> CalicoResult<Commit> {
+    pub async fn head_main(&self) -> SyntheceneResult<Commit> {
         self.head(MAIN).await
     }
 
-    pub async fn head_id<'a>(&self, branch: BranchRef<'a>) -> CalicoResult<Vec<u8>> 
+    pub async fn head_id<'a>(&self, branch: BranchRef<'a>) -> SyntheceneResult<Vec<u8>> 
     {
         let prot_ref = self.get_last_ref(branch).await?;
 
         Ok(prot_ref.commit_id)
     }
 
-    pub async fn head_id_main(&self) -> CalicoResult<Vec<u8>> {
+    pub async fn head_id_main(&self) -> SyntheceneResult<Vec<u8>> {
         self.head_id(MAIN).await
     }
 
-    pub async fn init_branch<'a>(&self, branch: BranchRef<'a>) -> CalicoResult<protocol::Ref> {
+    pub async fn init_branch<'a>(&self, branch: BranchRef<'a>) -> SyntheceneResult<protocol::Ref> {
         let path = Self::branch_path(branch)?;
         self.init_dir(&path.to_string().as_str()).await?;
 
@@ -383,7 +383,7 @@ impl TransactionLog {
     }
 
     #[async_recursion]
-    pub async fn find_commit(&self, reference: &ReferencePoint) -> CalicoResult<Commit> {
+    pub async fn find_commit(&self, reference: &ReferencePoint) -> SyntheceneResult<Commit> {
         match reference {
             ReferencePoint::Ref(tag) => {
                 let reference = self.get_last_ref(&tag).await?;
@@ -425,7 +425,7 @@ impl TransactionLog {
         }
     }
 
-    pub async fn get_commit(&self, commit_id: &Vec<u8>) -> CalicoResult<Commit> {
+    pub async fn get_commit(&self, commit_id: &Vec<u8>) -> SyntheceneResult<Commit> {
         let path = Self::commit_path(&commit_id)?;
 
         // todo: support a local in-memory object store cache
@@ -455,7 +455,7 @@ impl TransactionLog {
                          commit_timestamp: u64,
                          columns: Vec<String>,
                          _column_expressions: Vec<(String, String)>,
-                         tile_files: Vec<protocol::TileFiles>) -> CalicoResult<Commit> {
+                         tile_files: Vec<protocol::TileFiles>) -> SyntheceneResult<Commit> {
         
         let mut commit = protocol::Commit::default();
 
@@ -492,7 +492,7 @@ impl TransactionLog {
     }
 
     // finds the last instance of a branch ref
-    async fn find_last_ref<'a>(&self, branch: BranchRef<'a>) -> CalicoResult<ObjectStorePath> {
+    async fn find_last_ref<'a>(&self, branch: BranchRef<'a>) -> SyntheceneResult<ObjectStorePath> {
         let prefix: ObjectStorePath = format!("{}/{}/", Self::REF_DIR, branch).try_into().unwrap();
 
         let mut paths = self.object_store.list(Some(&prefix))
@@ -505,10 +505,10 @@ impl TransactionLog {
 
         paths.last()
             .map(|path| path.clone())
-            .ok_or(CalicoError::BranchNotFound(branch.to_string()))
+            .ok_or(SyntheceneError::BranchNotFound(branch.to_string()))
     }
 
-    async fn get_last_ref<'a>(&self, branch: BranchRef<'a>) -> CalicoResult<protocol::Ref> {
+    async fn get_last_ref<'a>(&self, branch: BranchRef<'a>) -> SyntheceneResult<protocol::Ref> {
         let ref_path = self.find_last_ref(branch).await?;
 
         // todo: support a local in-memory object store cache
@@ -522,7 +522,7 @@ impl TransactionLog {
         Ok(prot_ref)
     }
 
-    async fn put_ref<'a>(&self, branch: BranchRef<'a>, prot_ref: protocol::Ref) -> CalicoResult<protocol::Ref> {
+    async fn put_ref<'a>(&self, branch: BranchRef<'a>, prot_ref: protocol::Ref) -> SyntheceneResult<protocol::Ref> {
         let expected_len = prot_ref.encoded_len();
 
         let mut buf = Vec::with_capacity(18);
@@ -542,7 +542,7 @@ impl TransactionLog {
     // Perform a fast-forward only merge on a branch to a commit.
     pub async fn fast_forward<'a>(&self,
                                   branch: BranchRef<'a>,
-                                  commit_id: &Vec<u8>) -> CalicoResult<protocol::Ref> {
+                                  commit_id: &Vec<u8>) -> SyntheceneResult<protocol::Ref> {
         let mut prot_ref = self.get_last_ref(branch).await?;
 
         // TODO: make sure we're actually fast forwarding!
@@ -557,7 +557,7 @@ impl TransactionLog {
     pub async fn create_checkpoint(&self, 
                                    commit_id: &Vec<u8>,
                                    timestamp: u64,
-                                   tile_files: &Vec<protocol::TileFiles>) -> CalicoResult<Checkpoint> {
+                                   tile_files: &Vec<protocol::TileFiles>) -> SyntheceneResult<Checkpoint> {
 
         let mut checkpoint = protocol::Checkpoint::default();
 
@@ -585,13 +585,13 @@ impl TransactionLog {
     }
 
     // Determines whether there is an existing checkpoint for the passed in commit
-    pub async fn has_checkpoint(&self, commit_id: &Vec<u8>) -> CalicoResult<bool> {
+    pub async fn has_checkpoint(&self, commit_id: &Vec<u8>) -> SyntheceneResult<bool> {
         let path = Self::checkpoint_path(commit_id)?;
 
         Ok(self.object_store.head(&path).await.is_ok())
     }
 
-    pub async fn get_checkpoint(&self, commit_id: &Vec<u8>) -> CalicoResult<Checkpoint> {
+    pub async fn get_checkpoint(&self, commit_id: &Vec<u8>) -> SyntheceneResult<Checkpoint> {
         let path = Self::checkpoint_path(commit_id)?;
         let result = self.object_store.get(&path).await?;
         let bytes = result.bytes().await?;
@@ -615,28 +615,28 @@ impl TransactionLog {
 
     const META_FILE: &'static str = ".meta";
 
-    fn ref_path<'a>(branch: BranchRef<'a>, ref_seq: u64) -> CalicoResult<ObjectStorePath> {
+    fn ref_path<'a>(branch: BranchRef<'a>, ref_seq: u64) -> SyntheceneResult<ObjectStorePath> {
         let path: ObjectStorePath = format!("{}/{}/{:08x}", Self::REF_DIR, branch, ref_seq).try_into().unwrap();
         Ok(path)
     }
 
-    fn branch_path<'a>(branch: BranchRef<'a>) -> CalicoResult<ObjectStorePath> {
+    fn branch_path<'a>(branch: BranchRef<'a>) -> SyntheceneResult<ObjectStorePath> {
         let path: ObjectStorePath = format!("{}/{}", Self::REF_DIR, branch).try_into().unwrap();
         Ok(path)
     }
 
-    fn tmp_path() -> CalicoResult<ObjectStorePath> {
+    fn tmp_path() -> SyntheceneResult<ObjectStorePath> {
         let tmp_id = rand::thread_rng().gen::<[u8; 20]>().to_vec();
         let path: ObjectStorePath = format!("{}/{}", Self::TMP_DIR, hex::encode(&tmp_id)).try_into().unwrap();
         Ok(path)
     }
 
-    fn commit_path(commit_id: &Vec<u8>) -> CalicoResult<ObjectStorePath> {
+    fn commit_path(commit_id: &Vec<u8>) -> SyntheceneResult<ObjectStorePath> {
         let path: ObjectStorePath = format!("{}/{}", Self::COMMIT_DIR, hex::encode(&commit_id)).try_into().unwrap();
         Ok(path)
     }
 
-    fn checkpoint_path(commit_id: &Vec<u8>) -> CalicoResult<ObjectStorePath> {
+    fn checkpoint_path(commit_id: &Vec<u8>) -> SyntheceneResult<ObjectStorePath> {
         let path: ObjectStorePath = format!("{}/{}", Self::CHECKPOINT_DIR, hex::encode(&commit_id)).try_into().unwrap();
         Ok(path)
     }
@@ -645,7 +645,7 @@ impl TransactionLog {
     // to destination. If it fails try to cleanup the temp, but don't care if 
     // you can't
 
-    async fn put_if_not_exists(&self, path: &ObjectStorePath, data: Bytes) -> CalicoResult<()> {
+    async fn put_if_not_exists(&self, path: &ObjectStorePath, data: Bytes) -> SyntheceneResult<()> {
         let tmp_path = Self::tmp_path()?;
 
         self.object_store.put(&tmp_path, data).await?;
@@ -657,13 +657,13 @@ impl TransactionLog {
             Err(e) => {
                 // clean up 
                 self.object_store.delete(&tmp_path).await?;
-                Err(CalicoError::ObjectStoreError(e))
+                Err(SyntheceneError::ObjectStoreError(e))
             },
         }
 
     }
 
-    async fn init_dir<'a>(&self, path:&'a str) -> CalicoResult<()> {
+    async fn init_dir<'a>(&self, path:&'a str) -> SyntheceneResult<()> {
         let path: ObjectStorePath = format!("{}/{}", path, Self::META_FILE).try_into().unwrap();
         let data = Bytes::from("{}");
 
@@ -672,7 +672,7 @@ impl TransactionLog {
         Ok(())
     }
 
-    async fn init_log(&self) -> CalicoResult<()> {
+    async fn init_log(&self) -> SyntheceneResult<()> {
         let path: ObjectStorePath = Self::META_FILE.try_into().unwrap();
         let data = Bytes::from("{}");
 
@@ -700,12 +700,12 @@ mod tests {
 
     use crate::log::{TransactionLog, Commit };
     use crate::protocol;
-    use calico_shared::result::CalicoResult;
+    use synthecene_shared::result::SyntheceneResult;
 
     use super::MAIN;
 
     #[tokio::test]
-    async fn create_new_transaction_log() -> CalicoResult<()> {
+    async fn create_new_transaction_log() -> SyntheceneResult<()> {
         let temp_logdir = tempdir().unwrap();
         let object_store:Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?);
         let log = TransactionLog::init(object_store).await?;
@@ -755,7 +755,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn round_trip() -> CalicoResult<()> {
+    async fn round_trip() -> SyntheceneResult<()> {
         let temp_logdir = tempdir().unwrap();
         let object_store:Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?);
         let log = TransactionLog::init(object_store).await?;
@@ -778,7 +778,7 @@ mod tests {
 
 
     #[tokio::test]
-    async fn appends_in_log() -> CalicoResult<()> {
+    async fn appends_in_log() -> SyntheceneResult<()> {
 
         let temp_logdir = tempdir().unwrap();
         let object_store:Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?);
@@ -808,7 +808,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn appends_checkpoint_log() -> CalicoResult<()> {
+    async fn appends_checkpoint_log() -> SyntheceneResult<()> {
         let temp_logdir = tempdir().unwrap();
         let object_store:Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?);
         let log = TransactionLog::init(object_store).await?;
@@ -839,7 +839,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fails_duplicate_checkpoint() -> CalicoResult<()> {
+    async fn fails_duplicate_checkpoint() -> SyntheceneResult<()> {
         let temp_logdir = tempdir().unwrap();
         let object_store:Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?);
         let log = TransactionLog::init(object_store).await?;
@@ -854,7 +854,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn open_uninitialized_log_fails() -> CalicoResult<()> {
+    async fn open_uninitialized_log_fails() -> SyntheceneResult<()> {
         let temp_logdir = tempdir().unwrap();
         let object_store:Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(temp_logdir.path())?);
         let res = TransactionLog::open(object_store.clone()).await;
@@ -874,7 +874,7 @@ mod tests {
     /*
 
     #[test]
-    fn timetravel() -> CalicoResult<()> {
+    fn timetravel() -> SyntheceneResult<()> {
         let temp_logdir = tempdir().unwrap();
 
         let log_config = LogConfig {
@@ -912,7 +912,7 @@ mod tests {
     }
 
     #[test]
-    fn timetravel_with_checkpoint() -> CalicoResult<()> {
+    fn timetravel_with_checkpoint() -> SyntheceneResult<()> {
         let temp_logdir = tempdir().unwrap();
 
         let log_config = LogConfig {

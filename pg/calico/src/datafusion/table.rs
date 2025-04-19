@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use arrow::compute::SortOptions;
 use async_trait::async_trait;
-use calico_shared::result::CalicoResult;
+use synthecene_shared::result::SyntheceneResult;
 use datafusion::datasource::file_format::FileFormat;
 use datafusion::datasource::file_format::parquet::ParquetFormat;
 use datafusion::datasource::listing::PartitionedFile;
@@ -215,7 +215,7 @@ impl DataFusionTable {
 
     pub fn define(store: Arc<TableStore>,
         schema: Arc<Schema>,
-        reference: ReferencePoint) -> CalicoResult<Arc<dyn TableProvider>> {
+        reference: ReferencePoint) -> SyntheceneResult<Arc<dyn TableProvider>> {
 
         Ok(Arc::new(DataFusionTable(Table {
             store,

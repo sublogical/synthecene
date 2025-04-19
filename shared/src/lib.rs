@@ -9,7 +9,7 @@ pub mod result {
     use object_store::Error as ObjectStoreError;
 
     #[derive(Debug)]
-    pub enum CalicoError {
+    pub enum SyntheceneError {
         RobotForbidden,
 
         ArrowMessedUp(ArrowError),
@@ -31,12 +31,12 @@ pub mod result {
         Utf8Error(std::str::Utf8Error),
     }
 
-    impl Display for CalicoError {
+    impl Display for SyntheceneError {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             write!(f, "{:?}", self)
         }
     }
-    impl Error for CalicoError {
+    impl Error for SyntheceneError {
         fn source(&self) -> Option<&(dyn Error + 'static)> {
             match *self {
                 Self::ArrowMessedUp(ref e) => Some(e),
@@ -54,70 +54,70 @@ pub mod result {
         }
     }
 
-    impl From<CalicoError> for DataFusionError {
-        fn from(err: CalicoError) -> Self {
+    impl From<SyntheceneError> for DataFusionError {
+        fn from(err: SyntheceneError) -> Self {
             DataFusionError::External(Box::new(err))
         }
     }    
 
 
-    impl From<ArrowError> for CalicoError {
+    impl From<ArrowError> for SyntheceneError {
         fn from(err: ArrowError) -> Self {
-            CalicoError::ArrowMessedUp(err)
+            SyntheceneError::ArrowMessedUp(err)
         }
     }    
 
-    impl From<io::Error> for CalicoError {
+    impl From<io::Error> for SyntheceneError {
         fn from(err: io::Error) -> Self {
-            CalicoError::IoError(err)
+            SyntheceneError::IoError(err)
         }
 
     }
-    impl From<JoinError> for CalicoError {
+    impl From<JoinError> for SyntheceneError {
         fn from(err: JoinError) -> Self {
-            CalicoError::JoinFailed(err)
+            SyntheceneError::JoinFailed(err)
         }
     }    
-    impl From<EncodeError> for CalicoError {
+    impl From<EncodeError> for SyntheceneError {
         fn from(err: EncodeError) -> Self {
-            CalicoError::EncodeError(err)
+            SyntheceneError::EncodeError(err)
         }
     }    
-    impl From<DecodeError> for CalicoError {
+    impl From<DecodeError> for SyntheceneError {
         fn from(err: DecodeError) -> Self {
-            CalicoError::DecodeError(err)
+            SyntheceneError::DecodeError(err)
         }
     }    
-    impl From<ParquetError> for CalicoError {
+    impl From<ParquetError> for SyntheceneError {
         fn from(err: ParquetError) -> Self {
-            CalicoError::ParquetError(err)
+            SyntheceneError::ParquetError(err)
         }
     }    
-    impl From<reqwest::Error> for CalicoError {
+    impl From<reqwest::Error> for SyntheceneError {
         fn from(err: reqwest::Error) -> Self {
-            CalicoError::ReqwestError(err)
+            SyntheceneError::ReqwestError(err)
         }
     }    
-    impl From<ObjectStoreError> for CalicoError {
+    impl From<ObjectStoreError> for SyntheceneError {
         fn from(err: ObjectStoreError) -> Self {
-            CalicoError::ObjectStoreError(err)
+            SyntheceneError::ObjectStoreError(err)
         }
     }    
 
-    impl From<std::str::Utf8Error> for CalicoError {
+    impl From<std::str::Utf8Error> for SyntheceneError {
         fn from(err: std::str::Utf8Error) -> Self {
-            CalicoError::Utf8Error(err)
+            SyntheceneError::Utf8Error(err)
         }
 
     }
 
-    impl From<kv::Error> for CalicoError {
-        fn from(err: kv::Error) -> Self {
-            CalicoError::KvError(err)
+    impl From<kv::Error> for SyntheceneError {
+        fn from(err: kv::Error) -> Self  {
+            SyntheceneError::KvError(err)
         }
 
     }
-    pub type CalicoResult<T> = Result<T, CalicoError>;
+    pub type SyntheceneResult<T> = Result<T, SyntheceneError>;
 
 }
 

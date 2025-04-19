@@ -73,7 +73,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Instant;
 
-    use calico_shared::result::CalicoResult;
+    use synthecene_shared::result::SyntheceneResult;
     use object_store::ObjectStore;
     use object_store::local::LocalFileSystem;
     use tempfile::tempdir;
@@ -82,7 +82,7 @@ mod tests {
 
     use super::*;
 
-    fn make_file(path: &Path, size:usize) -> CalicoResult<()>{
+    fn make_file(path: &Path, size:usize) -> SyntheceneResult<()>{
         let mut file = File::create(path.to_str().unwrap().to_string())?;
         file.write_all(lipsum(size).as_bytes())?;
         Ok(())

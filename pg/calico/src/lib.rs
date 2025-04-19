@@ -1,8 +1,8 @@
-#[cfg(host_family = "windows")]
+#[cfg(windows)]
 macro_rules! PATH_SEPARATOR {() => (
     r"\"
 )}
-#[cfg(not(host_family = "windows"))]
+#[cfg(not(windows))]
 macro_rules! PATH_SEPARATOR {() => (
     r"/"
 )}

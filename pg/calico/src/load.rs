@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use arrow::array::Array;
 use arrow::record_batch::RecordBatch;
-use calico_shared::result::CalicoResult;
+use synthecene_shared::result::SyntheceneResult;
 use clap::{Parser, Args, Subcommand};
 use datafusion::datasource::object_store::ObjectStoreUrl;
 use datafusion::prelude::SessionContext;
@@ -40,7 +40,7 @@ async fn run_append_load(table_store: Arc<TableStore>,
                          num_rows:usize, 
                          string_size: usize, 
                          columns: &Vec<String>, 
-                         ids: Arc<dyn Array>) -> CalicoResult<protocol::Commit>{
+                         ids: Arc<dyn Array>) -> SyntheceneResult<protocol::Commit>{
     let mut cols = vec![(ID_FIELD, ids)];
 
     for col in columns {
@@ -56,7 +56,7 @@ async fn run_append_load(table_store: Arc<TableStore>,
 
 async fn perform_query(table_store: Arc<TableStore>, 
                        ctx: &SessionContext,
-                       columns: &Vec<String>) -> CalicoResult<Vec<RecordBatch>> {
+                       columns: &Vec<String>) -> SyntheceneResult<Vec<RecordBatch>> {
     let reference = ReferencePoint::Main;
     let columns: Vec<&str> = columns.iter().map(AsRef::as_ref).collect();
     let table_schema = make_schema(&columns);
@@ -156,7 +156,7 @@ impl LoadGenArgs {
     }
 
 
-    fn initialize_object_store(&self, ctx: &SessionContext, path: &std::path::Path) -> CalicoResult<Arc<dyn ObjectStore>> {
+    fn initialize_object_store(&self, ctx: &SessionContext, path: &std::path::Path) -> SyntheceneResult<Arc<dyn ObjectStore>> {
         let object_store = match &self.object {
             Some(path) => match Url::parse(path) {
                 Ok(url) => match url.scheme() {
@@ -186,7 +186,7 @@ impl LoadGenArgs {
         Ok(object_store)
     }
 
-    async fn provision_table(&self, object_store: Arc<dyn ObjectStore>) -> CalicoResult<Arc<TableStore>> {
+    async fn provision_table(&self, object_store: Arc<dyn ObjectStore>) -> SyntheceneResult<Arc<TableStore>> {
         let object_store_url = ObjectStoreUrl::parse("file://loadgen").unwrap();
         let mut table_store:TableStore = TableStore::new(object_store_url, object_store).await.unwrap();
         let column_groups = self.to_colgroups();
@@ -218,7 +218,7 @@ impl LoadGenArgs {
     }
 }
 
-async fn append_loadgen(task: &AppendArgs, ctx: &SessionContext, table_store: Arc<TableStore>, columns: Vec<String>) -> CalicoResult<()> {
+async fn append_loadgen(task: &AppendArgs, ctx: &SessionContext, table_store: Arc<TableStore>, columns: Vec<String>) -> SyntheceneResult<()> {
     let ids = u64_col(&big_col(task.num_rows));
 
     let object_store = table_store.default_object_store().await.unwrap();
@@ -255,7 +255,7 @@ async fn append_loadgen(task: &AppendArgs, ctx: &SessionContext, table_store: Ar
 }
 
 #[tokio::main]
-async fn main() -> CalicoResult<()>{
+async fn main() -> SyntheceneResult<()>{
 
     let temp = tempdir().unwrap();
     let args = LoadGenArgs::parse();

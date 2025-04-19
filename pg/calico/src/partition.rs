@@ -3,7 +3,7 @@ use arrow::compute::take;
 use arrow::datatypes::{Schema, DataType, SchemaRef };
 use arrow::record_batch::RecordBatch;
 use arrow::error::Result as ArrowResult;
-use calico_shared::partition_stream::PartitionStreamExt;
+use synthecene_shared::partition_stream::PartitionStreamExt;
 use datafusion::scalar::ScalarValue;
 use futures::Stream;
 use log::info;
@@ -14,7 +14,7 @@ use std::hash::Hasher;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use calico_shared::result::CalicoError;
+use synthecene_shared::result::SyntheceneError;
 use crate::protocol;
 use crate::table::TableStore;
 
@@ -24,7 +24,7 @@ pub enum Error {
     ComputePartition(String),
     RecordBatchEncoding(arrow::error::ArrowError),
     RecordBatchDecoding(arrow::error::ArrowError),
-    ColumnGroupExtraction(CalicoError),
+    ColumnGroupExtraction(SyntheceneError),
     UnknownColumnGroup(String),
 }
 

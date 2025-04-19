@@ -15,7 +15,7 @@ use crate::partition::{TiledRecordBatchStream, stream_from_batches, stream_from_
 use crate::table::TableStore;
 use crate::protocol;
 use crate::writer::{stream_batches_to_bytes, stream_bytes_to_objects};
-use calico_shared::result::CalicoResult;
+use synthecene_shared::result::SyntheceneResult;
 
 use super::Operation;
 
@@ -133,7 +133,7 @@ impl AppendOperation {
 
 #[async_trait]
 impl Operation<protocol::Commit> for AppendOperation {
-    async fn execute(mut self, table_store: Arc<TableStore>) -> CalicoResult<protocol::Commit> {
+    async fn execute(mut self, table_store: Arc<TableStore>) -> SyntheceneResult<protocol::Commit> {
 
         let max_partfile_size = self.max_partfile_size.unwrap_or(1024 * 1024 * 1024);
         let job_uuid = self.job_uuid.unwrap_or(Uuid::new_v4());
@@ -206,7 +206,7 @@ impl Operation<protocol::Commit> for AppendOperation {
         Ok(commit)
     }
 
-    async fn abort(mut self, _table_store: Arc<TableStore>) -> CalicoResult<()> {
+    async fn abort(mut self, _table_store: Arc<TableStore>) -> SyntheceneResult<()> {
         // nothing to cleanup
         Ok(())
     }
@@ -300,7 +300,7 @@ async fn tiled_stream_to_tile_files (
 pub async fn append_operation(
     table_store: Arc<TableStore>, 
     batch: RecordBatch
-) -> CalicoResult<protocol::Commit> 
+) -> SyntheceneResult<protocol::Commit> 
 {
     let log = table_store.default_transaction_log().await?;
     let parent_id = log.head_id_main().await?;
@@ -319,7 +319,7 @@ pub async fn append_operation_at(
     table_store: Arc<TableStore>, 
     timestamp: u64,
     batch: RecordBatch
-) -> CalicoResult<protocol::Commit>
+) -> SyntheceneResult<protocol::Commit>
 { 
     let log = table_store.default_transaction_log().await?;
     let parent_id = log.head_id_main().await?;

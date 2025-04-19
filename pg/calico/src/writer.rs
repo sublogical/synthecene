@@ -88,11 +88,11 @@ pub(crate) fn stream_batches_to_bytes(
                     let batch_rows = batch.num_rows();
                     let rows_to_write = estimate_rows_to_write(&batch, max_bytes, written_rows);
 
-                    if (rows_to_write == 0) {
+                    if rows_to_write == 0 {
                         pending = Some(batch);
                         continue_file = false;
                     }
-                    else if (rows_to_write < batch_rows) {
+                    else if rows_to_write < batch_rows {
                         // writing a subset of the batch, slice it first
                         let subbatch = batch.slice(0, rows_to_write);
                         writer.write(&subbatch)

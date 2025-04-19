@@ -11,7 +11,7 @@ use object_store::path::Path as ObjectStorePath;
 use crate::datatypes::timestamp_to_datetime;
 use crate::log::{TransactionLog, ReferencePoint, TableAction};
 use crate::protocol;
-use calico_shared::result::{CalicoResult, CalicoError};
+use synthecene_shared::result::{SyntheceneResult, SyntheceneError};
 
 // todo: convert this to calico-specific schema objects to allow for protobuf types & column metadata
 type Schema = ArrowSchema;
@@ -75,7 +75,7 @@ pub const OBJECT_PATH: &'static str = "objects";
 
 impl TableStore {
     pub async fn new(object_store_url:ObjectStoreUrl, 
-                     object_store:Arc<dyn ObjectStore>) -> CalicoResult<TableStore> {
+                     object_store:Arc<dyn ObjectStore>) -> SyntheceneResult<TableStore> {
 
         let log = Arc::new(TransactionLog::init(object_store.clone()).await?);
 
@@ -90,7 +90,7 @@ impl TableStore {
         Ok(table)
     }
 
-    pub async fn load() -> CalicoResult<TableStore> {
+    pub async fn load() -> SyntheceneResult<TableStore> {
         
         // load object_store for table metadata
         // for columns requested, get column-groups
@@ -99,51 +99,51 @@ impl TableStore {
         todo!()
     }
 
-    pub async fn data_store_for(&self, _tile: &protocol::Tile) -> CalicoResult<Arc<dyn ObjectStore>> {
+    pub async fn data_store_for(&self, _tile: &protocol::Tile) -> SyntheceneResult<Arc<dyn ObjectStore>> {
         Ok(self.object_store.clone())
     }
 
-    pub async fn log_store_for(&self, _tile: &protocol::Tile) -> CalicoResult<Arc<dyn ObjectStore>> {
+    pub async fn log_store_for(&self, _tile: &protocol::Tile) -> SyntheceneResult<Arc<dyn ObjectStore>> {
         Ok(self.object_store.clone())
     }
 
-    pub async fn default_object_store(&self, ) -> CalicoResult<Arc<dyn ObjectStore>> {
+    pub async fn default_object_store(&self, ) -> SyntheceneResult<Arc<dyn ObjectStore>> {
         Ok(self.object_store.clone())
     }
 
-    pub async fn transaction_log_for(&self, _tile: &protocol::Tile) -> CalicoResult<Arc<TransactionLog>> {
+    pub async fn transaction_log_for(&self, _tile: &protocol::Tile) -> SyntheceneResult<Arc<TransactionLog>> {
         Ok(self.log.clone())
     }
 
-    pub async fn default_transaction_log(&self) ->  CalicoResult<Arc<TransactionLog>> {
+    pub async fn default_transaction_log(&self) ->  SyntheceneResult<Arc<TransactionLog>> {
         Ok(self.log.clone())
     }
 
-    pub async fn column_group_for_column(&self, column: &str) -> CalicoResult<String> {
+    pub async fn column_group_for_column(&self, column: &str) -> SyntheceneResult<String> {
         let col_meta = self.column_group(column).await?;
         Ok(col_meta.column_group.clone())
     }
 
-    pub async fn column_group_meta(&self, column_group: &str) -> CalicoResult<&protocol::ColumnGroupMetadata> {
-        self.column_group_config.get(column_group).ok_or(CalicoError::UnknownColumnGroup(column_group.to_string()))
+    pub async fn column_group_meta(&self, column_group: &str) -> SyntheceneResult<&protocol::ColumnGroupMetadata> {
+        self.column_group_config.get(column_group).ok_or(SyntheceneError::UnknownColumnGroup(column_group.to_string()))
     }
 
-    pub async fn column_group(&self, column: &str) -> CalicoResult<&protocol::ColumnMetadata> {
-        self.column_config.get(column).ok_or(CalicoError::UnknownColumn(column.to_string()))
+    pub async fn column_group(&self, column: &str) -> SyntheceneResult<&protocol::ColumnMetadata> {
+        self.column_config.get(column).ok_or(SyntheceneError::UnknownColumn(column.to_string()))
     }
 
-    pub async fn add_column_group(&mut self, column_group_meta: protocol::ColumnGroupMetadata) -> CalicoResult<()> {
+    pub async fn add_column_group(&mut self, column_group_meta: protocol::ColumnGroupMetadata) -> SyntheceneResult<()> {
         self.column_group_config.insert(column_group_meta.column_group.clone(), column_group_meta);
         Ok(())
     }
 
-    pub async fn add_column(&mut self, column_meta: protocol::ColumnMetadata) -> CalicoResult<()> {
+    pub async fn add_column(&mut self, column_meta: protocol::ColumnMetadata) -> SyntheceneResult<()> {
         self.column_config.insert(column_meta.column.clone(), column_meta);
         Ok(())
     }
 
     // Use Table configuration to determine the map of column groups to columns for the table
-    pub async fn extract_column_groups(&self, schema:SchemaRef) -> CalicoResult<Vec<(String, Vec<usize>)>> {
+    pub async fn extract_column_groups(&self, schema:SchemaRef) -> SyntheceneResult<Vec<(String, Vec<usize>)>> {
 
         let field_names = schema.fields().iter().map(|field| field.name()).collect::<Vec<&String>>();
 
@@ -227,7 +227,7 @@ impl TableStore {
 
 impl Table {
     // Use Table configuration to determine the map of column groups to columns for the table
-    pub async fn extract_column_groups(&self) -> CalicoResult<Vec<(String, Vec<usize>)>> {
+    pub async fn extract_column_groups(&self) -> SyntheceneResult<Vec<(String, Vec<usize>)>> {
         self.store.extract_column_groups(self.schema.clone()).await
     }
 }

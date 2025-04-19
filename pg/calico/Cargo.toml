@@ -1,28 +1,27 @@
 [package]
-name = "store"
+name = "calico"
 version = "0.1.0"
 edition = "2021"
 
 
 [lib]
-name = "storelib"
+name = "calicolib"
 path = "src/lib.rs"
 
 [[bin]]
-name = "store-cli"
+name = "calico-cli"
 path = "src/cli.rs"
 
 [[bin]]
-name = "store-load"
+name = "calico-load"
 path = "src/load.rs"
-
 
 [[bin]]
 name = "store-kafka-connector"
 path = "src/kafka_connector.rs"
 
 [dependencies]
-calico-shared = { path = "../shared" }
+synthecene-shared = { path = "../../shared" }
 
 async-stream = "0.3"
 itertools = "0.7.4"
