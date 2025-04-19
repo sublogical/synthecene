@@ -1,9 +1,11 @@
 [workspace]
 resolver = "2"
 members = [
+    "pg/calico",
     "pg/glimmer", 
     "pg/heimdall",
     "pg/porta",
     "pg/vera", 
+    "shared",
     "tools/vizzie",
 ]
