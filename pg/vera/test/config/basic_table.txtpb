@@ -1,0 +1,22 @@
+# proto-file: src/vera_api.proto
+# proto-message: CreateTableRequest
+
+universe_uri: "/test/test_universe"
+table_specs: [
+    {
+        table_uri: "/test/basic_table_1"
+        table_name: "Basic Table 1"
+        table_description: "This is the basic table 1"
+        column_specs: [
+            {
+                column_uri: "/test/test_column_1"
+                type_uri: "/std/string"
+            },
+            {
+                column_uri: "/test/test_column_2"
+                type_uri: "/std/int64"
+            }
+        ]
+        properties { key: "default_namespace", value: { string_value: "/test" } }
+    }
+]

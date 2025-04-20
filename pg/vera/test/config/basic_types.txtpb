@@ -1,0 +1,18 @@
+# proto-file: src/vera_api.proto
+# proto-message: CreateTypeRequest
+
+universe_uri: "/test/test_universe"
+type_specs: [
+    {
+        type_uri: "/test/test_type_1"
+        type_name: "test_type_1"
+        type_description: "This is the test type 1"
+        properties { key: "cql_type_definition", value: { string_value: "text" } }
+    },
+    {
+        type_uri: "/test/test_type_2"
+        type_name: "test_type_2"
+        type_description: "This is the test type 2"
+        properties { key: "cql_type_definition", value: { string_value: "int" } }
+    }
+]

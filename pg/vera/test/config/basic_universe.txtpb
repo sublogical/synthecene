@@ -1,0 +1,11 @@
+# proto-file: src/vera_api.proto
+# proto-message: CreateUniverseRequest
+
+universe_specs: [
+    {
+        universe_uri: "/test/test_universe"
+        universe_name: "Test Universe"
+        universe_description: "This is the test universe"
+        properties { key: "default_namespace", value: { string_value: "/test" } }
+    }
+]

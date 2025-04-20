@@ -1,121 +1,199 @@
-    syntax = "proto3";
+syntax = "proto3";
 
-    package vera_api;
+package vera_api;
 
-    import "google/protobuf/struct.proto";
+import "google/protobuf/struct.proto";
 
-    message Document {
-        string document_id = 1;
-        string prior_version = 2;
-        map<string, CellValue> cell_values = 3;
+message Document {
+    string document_id = 1;
+    string prior_version = 2;
+    map<string, CellValue> cell_values = 3;
+}
+
+message CellValue {
+    oneof data {
+        string string_value = 1;
+        int64 int64_value = 2;
+        double double_value = 3;
+        bool boolean_value = 4;
+        google.protobuf.Value proto_value = 5;
+        Attachment attachment = 6;
     }
+}
 
-    message ColumnSpec {
-        string column_uri = 1;
-        string type_uri = 2;
+message S3Attachment {
+
+}
+
+message Attachment {
+    oneof file {
+        S3Attachment s3 = 1;
     }
+}
 
-    message CellValue {
-        oneof data {
-            string string_value = 1;
-            int64 int64_value = 2;
-            double double_value = 3;
-            bool boolean_value = 4;
-            google.protobuf.Value proto_value = 5;
-            Attachment attachment = 6;
-        }
-    }
+message UniverseSpec {
+    string universe_uri = 1;
+    optional string universe_name = 2;
+    optional string universe_description = 3;
 
-    message S3Attachment {
+    /**
+     * properties:
+     *   - default_namespace(String) - default namespace for inferred column uris
+     */
+    map<string, google.protobuf.Value> properties = 4;
+}
 
-    }
+message CreateUniverseRequest {
+    repeated UniverseSpec universe_specs = 1;
+}
 
-    message Attachment {
-        oneof file {
-            S3Attachment s3 = 1;
-        }
-    }
+message CreateUniverseResponse {
+}
 
-    message CreateTableRequest {
-        string universe_uri = 1;
-        string table_uri = 2;
-        repeated ColumnSpec column_specs = 3;
-    }
+message DeleteUniverseRequest {
+    string universe_uri = 1;
+}
 
-    message CreateTableResponse {
-    }
+message DeleteUniverseResponse {
+}
 
-    message DeleteTableRequest {
-        string universe_uri = 1;
-        string table_uri = 2;
-        bool delete_if_not_empty = 3;
-    }
+message TableSpec {
+    string table_uri = 1;
+    optional string table_name = 2;
+    optional string table_description = 3;
 
-    message DeleteTableResponse {
-    }
+    repeated ColumnSpec column_specs = 4;
 
-    message CreateColumnRequest {
-        string universe_uri = 1;
-        string table_uri = 2;
-        repeated ColumnSpec column_specs = 3;
-    }
+    /**
+     * properties:
+     *   - default_namespace(String) - default namespace for inferred column uris
+     */
+     map<string, google.protobuf.Value> properties = 5;
+}
 
-    message CreateColumnResponse {
-    }
+message CreateTableRequest {
+    string universe_uri = 1;
+    repeated TableSpec table_specs = 2; 
+}
 
-    message DeleteColumnRequest {
-        string universe_uri = 1;
-        string table_uri = 2;
-        repeated string column_uris = 3;
-    }
+message CreateTableResponse {
+}
 
-    message DeleteColumnResponse {
-    }
+message DeleteTableRequest {
+    string universe_uri = 1;
+    string table_uri = 2;
+    bool delete_if_not_empty = 3;
+}
 
-    message ReadDocumentsRequest {
-        string universe_uri = 1;
-        string table_uri = 2;
-        repeated string document_ids = 3;    
-        repeated string column_uris = 4;
-    }
+message DeleteTableResponse {
+}
 
-    message ReadDocumentsResponse {
-        repeated ReadDocumentResponse read_docs = 1;
-    }
+message ColumnSpec {
+    string column_uri = 1;
+    string type_uri = 2;
+    optional string column_name = 3;
+    optional string column_description = 4;
 
-    message ReadDocumentResponse {
-        string document_id = 1;
-        repeated CellValue cell_values = 2;
-    }
+    /**
+     * properties:
+     *   - none yet
+     */
+     map<string, google.protobuf.Value> properties = 5;
+}
 
-    message WriteDocumentsRequest {
-        string universe_uri = 1;
-        string table_uri = 2;
-        repeated string column_uris = 3;
-        repeated DocumentUpdate document_updates = 4;
-    }
+message CreateColumnRequest {
+    string universe_uri = 1;
+    string table_uri = 2;
+    repeated ColumnSpec column_specs = 3;
+}
 
-    message DocumentUpdate {
-        string document_id = 1;
-        repeated CellValue cell_values = 2;
-    }
+message CreateColumnResponse {
+}
 
-    enum OperationType {
-        Replace = 0;
-        Append = 1;
-        Merge = 2;
-        Remove = 3;
-    }
+message DeleteColumnRequest {
+    string universe_uri = 1;
+    string table_uri = 2;
+    repeated string column_uris = 3;
+}
 
-    message WriteDocumentsResponse {
+message DeleteColumnResponse {
+}
 
-    }
+message TypeSpec {
+    string type_uri = 1;
+    string type_name = 2;
+    string type_description = 3;
 
-    service Vera {
-        rpc Get (ReadDocumentsRequest) returns (ReadDocumentsResponse);
-        rpc Put (WriteDocumentsRequest) returns (WriteDocumentsResponse);
-        rpc CreateTable (CreateTableRequest) returns (CreateTableResponse);
-        rpc DeleteTable (DeleteTableRequest) returns (DeleteTableResponse);
-        rpc CreateColumn (CreateColumnRequest) returns (CreateColumnResponse);
-        rpc DeleteColumn (DeleteColumnRequest) returns (DeleteColumnResponse);
-    }
+    /**
+     * properties:
+     *   - cql_type_definition(String) - CQL type to use for columns using this type
+     */
+    map<string, google.protobuf.Value> properties = 4;
+}
+
+message CreateTypeRequest {
+    string universe_uri = 1;
+    repeated TypeSpec type_specs = 2;
+}
+
+message CreateTypeResponse {
+}
+
+message DeleteTypeRequest {
+    string universe_uri = 1;
+    repeated string type_uris = 2;
+}
+
+message DeleteTypeResponse {
+}
+
+message ReadDocumentsRequest {
+    string universe_uri = 1;
+    string table_uri = 2;
+    repeated string document_ids = 3;    
+    repeated string column_uris = 4;
+}
+
+message ReadDocumentsResponse {
+    repeated ReadDocumentResponse read_docs = 1;
+}
+
+message ReadDocumentResponse {
+    string document_id = 1;
+    repeated CellValue cell_values = 2;
+}
+
+message WriteDocumentsRequest {
+    string universe_uri = 1;
+    string table_uri = 2;
+    repeated string column_uris = 3;
+    repeated DocumentUpdate document_updates = 4;
+}
+
+message DocumentUpdate {
+    string document_id = 1;
+    repeated CellValue cell_values = 2;
+}
+
+enum OperationType {
+    Replace = 0;
+    Append = 1;
+    Merge = 2;
+    Remove = 3;
+}
+
+message WriteDocumentsResponse {
+}
+
+service Vera {
+    rpc Get (ReadDocumentsRequest) returns (ReadDocumentsResponse);
+    rpc Put (WriteDocumentsRequest) returns (WriteDocumentsResponse);
+    rpc CreateUniverse (CreateUniverseRequest) returns (CreateUniverseResponse);
+    rpc DeleteUniverse (DeleteUniverseRequest) returns (DeleteUniverseResponse);
+    rpc CreateTable (CreateTableRequest) returns (CreateTableResponse);
+    rpc DeleteTable (DeleteTableRequest) returns (DeleteTableResponse);
+    rpc CreateColumn (CreateColumnRequest) returns (CreateColumnResponse);
+    rpc DeleteColumn (DeleteColumnRequest) returns (DeleteColumnResponse);
+    rpc CreateType (CreateTypeRequest) returns (CreateTypeResponse);
+    rpc DeleteType (DeleteTypeRequest) returns (DeleteTypeResponse);
+}

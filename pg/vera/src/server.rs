@@ -17,13 +17,14 @@ async fn healthcheck(session: &Session) -> Result<(), Box<dyn std::error::Error>
         .query_unpaged("SELECT keyspace_name FROM system_schema.keyspaces;", ())
         .await?
         .into_rows_result()?;
-        
-    info!("KEYSPACES");
-    for row in result.rows::<(Option<&str>,)>()? {
-        let (keyspace_name,): (Option<&str>,) = row?;
-        info!("{}", keyspace_name.unwrap_or("NONE"));
+
+    if result.rows_num() == 0 {
+        return Err("No keyspaces found".into());
     }
 
+    // todo: check that the vera global keyspace exists
+    // todo: check that the migrations have all been applied
+    
     Ok(())
 }
 
@@ -35,22 +36,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let uri = std::env::var("SCYLLA_URI")
-    .unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+        .unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
-    info!("Connecting Session");
+    info!("Connecting to ScyllaDB at {}", uri);
     let session: Session = SessionBuilder::new()
         .known_node(uri)
         .connection_timeout(Duration::from_secs(3))
         .cluster_metadata_refresh_interval(Duration::from_secs(10))
         .build()
         .await?;
-    info!("Session Connected");
+    info!("✅ ScyllaDB Connected");
 
     healthcheck(&session).await?;
+    info!("✅ ScyllaDB Healthy");
 
     let addr = "[::1]:50053".parse()?;
     let vera = VeraService { session };
-    println!("{} Starting VeraService on {:?}", "🦑", addr);
+    info!("{} Starting VeraService on {:?}", "🦑", addr);
     Server::builder()
         .add_service(VeraServer::new(vera))
         .serve(addr)

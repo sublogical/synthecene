@@ -1,6 +1,5 @@
 use itertools::Itertools;
-use scylla::{Session };
-
+use std::collections::HashMap;
 use vera::vera_api::{
     CellValue,
     ColumnSpec,
@@ -219,26 +218,27 @@ mod tests {
         assert_eq!(derive_values(&document_updates), "(1, 'alpha', 'beta', 1, 2), (2, 'delta', 'epsilon', 3, 4.15)");
     }
 
+    fn make_column_spec(column_uri: &str, type_uri: &str) -> ColumnSpec {
+        ColumnSpec {
+            column_uri: column_uri.to_string(),
+            type_uri: type_uri.to_string(),
+            column_name: None,
+            column_description: None,
+            properties: HashMap::new(),
+        }
+    }
+
     #[test]
     fn test_derive_table_create_schema() {
         let column_specs = vec![
-            ColumnSpec {
-                column_uri: "/my/foo".to_string(),
-                type_uri: "/std/text".to_string(),   
-            },
-            ColumnSpec {
-                column_uri: "/my/bar".to_string(),
-                type_uri: "/std/int64".to_string(),
-            },
+            make_column_spec("/my/foo", "/std/text"),
+            make_column_spec("/my/bar", "/std/int64"),
         ];
 
         assert_eq!(derive_table_create_schema(&column_specs).unwrap(), "document_id TEXT PRIMARY KEY, __my__foo TEXT, __my__bar BIGINT");
 
         let column_specs = vec![
-            ColumnSpec {
-                column_uri: "/my/foo".to_string(),
-                type_uri: "unknown".to_string(),   
-            },
+            make_column_spec("/my/foo", "unknown"),
         ];
 
         assert!(derive_table_create_schema(&column_specs).is_err());

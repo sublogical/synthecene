@@ -27,10 +27,28 @@ enum VeraError {
 use vera_api::{
     vera_client::VeraClient,
     CellValue,
-    CreateTableRequest,
     ColumnSpec,
+    CreateColumnRequest,
+    CreateColumnResponse,
+    CreateTableRequest,
+    CreateTableResponse,
+    CreateTypeRequest,
+    CreateTypeResponse,
+    CreateUniverseRequest,
+    CreateUniverseResponse,
+    DeleteColumnRequest,
+    DeleteColumnResponse,
     DeleteTableRequest,
+    DeleteTableResponse,
+    DeleteTypeRequest,
+    DeleteTypeResponse,
+    DeleteUniverseRequest,
+    DeleteUniverseResponse,
     DocumentUpdate,
+    ReadDocumentsRequest,
+    ReadDocumentsResponse,
+    TableSpec,
+    TypeSpec,
     WriteDocumentsRequest,
     cell_value::Data,
 };
@@ -289,8 +307,8 @@ async fn main() -> Result<(), VeraError> {
                     serde_json::Value::Bool(b) => Ok(CellValue {
                         data: Some(Data::BooleanValue(b)),
                     }),
-                    serde_json::Value::Array(a) => Err(VeraError::InvalidColumnValues("array values are not supported".to_string())),
-                    serde_json::Value::Object(o) => Err(VeraError::InvalidColumnValues("object values are not supported".to_string())),
+                    serde_json::Value::Array(_) => Err(VeraError::InvalidColumnValues("array values are not supported".to_string())),
+                    serde_json::Value::Object(_) => Err(VeraError::InvalidColumnValues("object values are not supported".to_string())),
                     _ => Err(VeraError::InvalidColumnValues("unsupported value type".to_string())),
                 }
             }).collect::<Result<Vec<_>, _>>()?;
@@ -339,13 +357,22 @@ async fn main() -> Result<(), VeraError> {
                 ColumnSpec {
                     column_uri: key.to_string(),
                     type_uri: value.to_string(),
+                    column_name: None,
+                    column_description: None,
+                    properties: HashMap::new(),
                 }
             }).collect();
 
+            // todo: add table name and description
             let request = CreateTableRequest {
                 universe_uri: resolved_universe_uri,
-                table_uri: resolved_table_uri,
-                column_specs: column_specs,
+                table_specs: vec![TableSpec {
+                    table_uri: resolved_table_uri,
+                    table_name: None,
+                    table_description: None,
+                    column_specs: column_specs,
+                    properties: HashMap::new(),
+                }],
             };
             let response = client.create_table(request).await?;
             info!("CreateTable response: {:?}", response);

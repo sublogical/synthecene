@@ -1,7 +1,6 @@
-use itertools::Itertools;
-use scylla::{Session };
+use scylla::Session;
 
-use vera::vera_api::vera_server::{ Vera, VeraServer };
+use vera::vera_api::vera_server::Vera;
 use vera::vera_api::{
     CreateTableRequest,
     CreateTableResponse,
@@ -11,14 +10,18 @@ use vera::vera_api::{
     CreateColumnResponse,
     DeleteColumnRequest,
     DeleteColumnResponse,
+    CreateTypeRequest,
+    CreateTypeResponse,
+    DeleteTypeRequest,
+    DeleteTypeResponse,
+    CreateUniverseRequest,
+    CreateUniverseResponse,
+    DeleteUniverseRequest,
+    DeleteUniverseResponse,
     ReadDocumentsRequest,
     ReadDocumentsResponse,
     WriteDocumentsRequest, 
     WriteDocumentsResponse,
-    DocumentUpdate,
-    CellValue,
-    ColumnSpec,
-    cell_value::Data,
 };
 use tonic::{Request, Response, Status};
 use tracing::{info, instrument};
@@ -67,7 +70,7 @@ impl Vera for VeraService {
         let query = format!("INSERT INTO {}.{} {} VALUES {}", keyspace, table_name, schema, values);
 
         info!("Query: {}", query);
-        let result = self.session
+        let _result = self.session
             .query_unpaged(query, ())
             .await
             .map_err(|e| Status::internal(e.to_string()))?; // todo: improve error handling
@@ -77,6 +80,21 @@ impl Vera for VeraService {
         Ok(Response::new(WriteDocumentsResponse {}))
     }
 
+    #[instrument(skip(self))]
+    async fn create_universe(
+        &self,
+        _request: Request<CreateUniverseRequest>,
+    ) -> Result<Response<CreateUniverseResponse>, Status> {
+        todo!("create universe");
+    }
+
+    #[instrument(skip(self))]
+    async fn delete_universe(
+        &self,
+        _request: Request<DeleteUniverseRequest>,
+    ) -> Result<Response<DeleteUniverseResponse>, Status> {
+        todo!("delete universe");
+    }
 
     #[instrument(skip(self))]
     async fn create_table(
@@ -88,21 +106,26 @@ impl Vera for VeraService {
         // todo: check permissions of caller to create table in this universe
 
         let keyspace = derive_keyspace(&req.universe_uri);
-        let table_name = derive_table_name(&req.table_uri);
-        let schema = derive_table_create_schema(&req.column_specs)
-            .map_err(|e| Status::invalid_argument(e.to_string()))?;
-        let query = format!("CREATE TABLE {}.{} ({})", keyspace, table_name, schema);
+        // todo: move this into a batch operation
+        for table_spec in req.table_specs {
+            let table_name = derive_table_name(&table_spec.table_uri);
+            let schema = derive_table_create_schema(&table_spec.column_specs)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
+            let query = format!("CREATE TABLE {}.{} ({})", keyspace, table_name, schema);
 
-        // todo: add support for table configuration
+            // todo: add support for table configuration
 
-        info!("Creating table: {:?}.{:?} with schema: {:?}", keyspace, table_name, schema);
+            info!("Creating table: {:?}.{:?} with schema: {:?}", keyspace, table_name, schema);
 
-        let result = self.session
-            .query_unpaged(query, ())
-            .await
-            .map_err(|e| Status::internal(e.to_string()))?; // todo: improve error handling
+            let _result = self.session
+                .query_unpaged(query, ())
+                .await
+                .map_err(|e| Status::internal(e.to_string()))?; // todo: improve error handling
 
-        info!("Table created: {:?}.{:?}", keyspace, table_name);
+            // todo: add support for global table registry
+
+            info!("Table created: {:?}.{:?}", keyspace, table_name);
+        }
 
         Ok(Response::new(CreateTableResponse {}))
     }
@@ -136,7 +159,7 @@ impl Vera for VeraService {
 
         info!("Dropping table: {:?}.{:?}", keyspace, table_name);
 
-        let result = self.session
+        let _result = self.session
             .query_unpaged(query, ())
             .await
             .map_err(|e| Status::internal(e.to_string()))?; // todo: improve error handling
@@ -152,8 +175,9 @@ impl Vera for VeraService {
         request: Request<CreateColumnRequest>,
     ) -> Result<Response<CreateColumnResponse>, Status> {
         let req = request.into_inner();
-        let keyspace = derive_keyspace(&req.universe_uri);
-        let table_name = derive_table_name(&req.table_uri);
+        let _keyspace = derive_keyspace(&req.universe_uri);
+        let _table_name = derive_table_name(&req.table_uri);
+
 
         todo!("create column");
     }
@@ -164,5 +188,21 @@ impl Vera for VeraService {
         _request: Request<DeleteColumnRequest>,
     ) -> Result<Response<DeleteColumnResponse>, Status> {
         todo!("delete column");
+    }
+
+    #[instrument(skip(self))]
+    async fn create_type(
+        &self,
+        _request: Request<CreateTypeRequest>,
+    ) -> Result<Response<CreateTypeResponse>, Status> {
+        todo!("create type");
+    }
+
+    #[instrument(skip(self))]
+    async fn delete_type(
+        &self,
+        _request: Request<DeleteTypeRequest>,
+    ) -> Result<Response<DeleteTypeResponse>, Status> {
+        todo!("delete type");
     }
 }
