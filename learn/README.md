@@ -1,19 +1,77 @@
 # TODO List
 
+
+* AutoLabeler - label with LLMs
+* AutoWorker - thinking model to construct workflows
+* AutoRater - generalized FT / minified student models
+* Adverse - adversarial play-based classification
+* Lossifier - diagnose loss patterns from eval results
+* SynthGen - synthetically generate datasets
+  * DP
+  * i18n
+  * Tables
+
+
+
+
+## LOW PRIORITY
 * transformer
   * refactor model configuration out of learn.py
   * refactor dataloader out of learn.py
   * add support for mixtures in dataloader
   * implement inference
 * proximal policy optimization
+* models
+  * calculate embeddings with pretrained LLM
+  * reward model
+  * fine-tune LLM on corpus
+  * PPO optimization on pos/neg examples
+  * prompt tuning
+* inference serving
+  * local container
+  * inferentia
+* training
+  * train on trainium / sagemaker
 
 
 
-
-
+* Build same model with torch, tf, jax
+* Models to build
+  * Jax + Flax CiFAR10 CNN: https://www.kaggle.com/code/aakashnain/building-models-in-jax-part2-flax
+  * causal decoder only language model
+  * extractive summarization model
+* Experimental PoCs
+  * Diffusion Models
+    * Text to Image
+    * Image to Image
+    * Image to Image with masking
+    * Image to Image with text instructions
+    * Upscale output images
+    * Variable aspect ratio images
+    * Tiling images
+    * Composition of multiple images
+    * Fine-tune Diffusion Model on specific corpus
 
 
 # HOWTO
+
+## Machine Setup: Ubuntu
+
+### Nvidia/Cuda
+Install Nvidia Drivers
+```
+sudo apt install nvidia-driver-525 nvidia-dkms-525 nvidia-utils-525
+sudo apt install nvidia-cuda-toolkit
+
+```
+Reboot.
+
+Make sure the driver is running & card is found
+```
+nvidia-smi
+```
+There should be a GPU. See it?
+
 
 ## Python Environment
 
@@ -49,6 +107,7 @@ Should see something like
 True
 ```
 
+***NOTE: THIS DOESN't WORK NOW FOR tf-gpu-3.12***
 
 
 
