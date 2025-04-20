@@ -6,27 +6,38 @@
 * novel human processes with radical productivity
 * manage production ml processes fire and forget
 
-* Datastore
-* Tools
-  * authoring - visual studio for data
-  * visualizaiton
-  * analytic
 
-### Orchestration
+### Mephesto - Workflow Orchestration System
 * long-runing (days+) tasks
 * restartable/retryable
 * high-cardinality tasks (e.g. spawned by agentic interactions)
 * human tasks - ask 
 
-### Processing
+### Signal - Automated data enrichment system
 * run inference
   * autorater / reward model
   * LLM / agent "agile classifier
 
-### Storage
+### Calico
+* object storage based versioned storage system
+* powers vera (?)
+
+### Vera - feature storage
 * batch update to trillions of examples
 * point update to thousands to millions of examples
 
+
+
+## Tools
+
+### Holoscope - visualizer
+### Mote - Chrome extension
+### Parrot - Google Documents Agent plugin
+### Pilot - Admin interface
+### Studio - Data Research interface
+
+
+# WANT TO BUILD
 
 ## Agent Engine
 
@@ -77,6 +88,16 @@
 
 
 ### Ideas to Build
+
+* import images into cassandra
+* gemini / o4 / grok - ask LLM to annotate the images (x1000)
+* train an autorater to do the same thing
+
+
+
+
+
+
 * Agent data curation / evaluation interface
 * Agent framework ala langchain supporting multimodal and streaming bidirectional (ala Astra)
 * Multiagent orchestration
